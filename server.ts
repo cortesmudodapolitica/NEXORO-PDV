@@ -187,6 +187,39 @@ app.post('/api/sync/import', express.json(), async (req: any, res: any) => {
     const imported = importOrderTransactional(order);
 
     if (!imported.deduplicated) {
+      routeOrderToPrint(imported.order, undefined, undefined, { skipAutoPrint: false });
+      broadcastOrdersUpdate('order_created', imported.order);
+    }
+
+    return res.json({
+      ok: true,
+      duplicated: imported.deduplicated,
+      order: imported.order
+    });
+  } catch (error: any) {
+    console.error('[SYNC] Erro ao importar pedido:', error);
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || 'Erro ao importar pedido'
+    });
+  }
+});
+
+registerSyncRoutes(app);
+app.post('/api/sync/import', express.json(), async (req: any, res: any) => {
+  try {
+    const order = req.body?.order;
+
+    if (!order?.id) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Pedido inválido'
+      });
+    }
+
+    const imported = importOrderTransactional(order);
+
+    if (!imported.deduplicated) {
       routeOrderToPrint(
         imported.order,
         undefined,
@@ -211,52 +244,6 @@ app.post('/api/sync/import', express.json(), async (req: any, res: any) => {
     return res.status(500).json({
       ok: false,
       error: error?.message || 'Erro ao importar pedido'
-    });
-  }
-});
-    }
-
-    const syncId =
-      String(order.syncId || order.id);
-
-    const globalState =
-      globalThis as any;
-
-    if (!globalState.__nexoroImportedOrders) {
-      globalState.__nexoroImportedOrders = new Set();
-    }
-
-    if (
-      globalState.__nexoroImportedOrders.has(syncId)
-    ) {
-      return res.json({
-        ok: true,
-        duplicated: true,
-        syncId
-      });
-    }
-
-    globalState.__nexoroImportedOrders.add(syncId);
-
-    console.log(
-      '[NEXORO SYNC] Pedido online recebido:',
-      order.id
-    );
-
-    return res.json({
-      ok: true,
-      duplicated: false,
-      syncId
-    });
-
-  } catch (error) {
-    console.error(
-      '[NEXORO SYNC] Erro:',
-      error
-    );
-
-    return res.status(500).json({
-      error: 'Erro ao importar pedido'
     });
   }
 });
