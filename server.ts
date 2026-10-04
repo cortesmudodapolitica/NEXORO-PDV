@@ -1,4 +1,4 @@
-import { getGeminiModel } from './server/aiModel';
+﻿import { getGeminiModel } from './server/aiModel';
 import 'dotenv/config';
 import { checkDataPersistence } from './server/dataDir';
 import express from 'express';
@@ -12,6 +12,7 @@ import {
   getAllOrders,
   getOrderById,
   createOrderTransactional,
+  importOrderTransactional,
   updateOrderStatusTransactional,
   updateOrderStationStatusTransactional,
   appendItemsToTableOrderTransactional,
@@ -167,8 +168,99 @@ import {
 } from './server/catalogService';
 import { createTableAccessToken, verifyTableAccessToken } from './server/tableAccessService';
 import { listTables, ensureTable, setTableActive, isTableActive } from './server/tableService';
+import { registerSyncRoutes, queueOnlineOrder } from './server/syncRoutes';
 
 const app = express();
+
+registerSyncRoutes(app);
+app.post('/api/sync/import', express.json(), async (req: any, res: any) => {
+  try {
+    const order = req.body?.order;
+
+    if (!order?.id) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Pedido inválido'
+      });
+    }
+
+    const imported = importOrderTransactional(order);
+
+    if (!imported.deduplicated) {
+      routeOrderToPrint(
+        imported.order,
+        undefined,
+        undefined,
+        { skipAutoPrint: false }
+      );
+
+      broadcastOrdersUpdate(
+        'order_created',
+        imported.order
+      );
+    }
+
+    return res.json({
+      ok: true,
+      duplicated: imported.deduplicated,
+      order: imported.order
+    });
+  } catch (error: any) {
+    console.error('[SYNC] Erro ao importar pedido:', error);
+
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || 'Erro ao importar pedido'
+    });
+  }
+});
+    }
+
+    const syncId =
+      String(order.syncId || order.id);
+
+    const globalState =
+      globalThis as any;
+
+    if (!globalState.__nexoroImportedOrders) {
+      globalState.__nexoroImportedOrders = new Set();
+    }
+
+    if (
+      globalState.__nexoroImportedOrders.has(syncId)
+    ) {
+      return res.json({
+        ok: true,
+        duplicated: true,
+        syncId
+      });
+    }
+
+    globalState.__nexoroImportedOrders.add(syncId);
+
+    console.log(
+      '[NEXORO SYNC] Pedido online recebido:',
+      order.id
+    );
+
+    return res.json({
+      ok: true,
+      duplicated: false,
+      syncId
+    });
+
+  } catch (error) {
+    console.error(
+      '[NEXORO SYNC] Erro:',
+      error
+    );
+
+    return res.status(500).json({
+      error: 'Erro ao importar pedido'
+    });
+  }
+});
+
 // Dynamic PORT: respects process.env.PORT on Render (e.g. 10000) or defaults to 3000 in local/dev
 const PORT = process.env.PORT ? Number(process.env.PORT) : (process.env.NODE_ENV === 'production' && !process.env.AI_STUDIO ? 10000 : 3000);
 const serverStartTime = Date.now();
@@ -177,25 +269,25 @@ const serverStartTime = Date.now();
 app.disable('x-powered-by');
 app.use(compression());
 
-// Atrás de proxy (Render, Cloud Run, Nginx): necessário para IP real do cliente (rate limit)
+// AtrÃ¡s de proxy (Render, Cloud Run, Nginx): necessÃ¡rio para IP real do cliente (rate limit)
 app.set('trust proxy', 1);
 
-// Segurança: headers + CORS restrito às origens de CORS_ORIGINS (mesma origem não precisa de CORS)
+// SeguranÃ§a: headers + CORS restrito Ã s origens de CORS_ORIGINS (mesma origem nÃ£o precisa de CORS)
 app.use(securityHeaders);
 app.use(corsMiddleware);
 
-// Parsers: limites pequenos por padrão; maiores só onde há upload/edição de catálogo (rotas de staff)
+// Parsers: limites pequenos por padrÃ£o; maiores sÃ³ onde hÃ¡ upload/ediÃ§Ã£o de catÃ¡logo (rotas de staff)
 app.use('/api/upload', express.json({ limit: '12mb' }));
 app.use('/api/catalog', express.json({ limit: '8mb' }));
 app.use('/api/state', express.json({ limit: '2mb' }));
 app.use('/api/fiscal', express.json({ limit: '3mb' })); // certificado .pfx em base64
 app.use(express.json({ limit: '256kb' }));
 
-// Limites de abuso para rotas públicas
+// Limites de abuso para rotas pÃºblicas
 const publicWriteLimiter = rateLimit({ key: 'pub-write', max: 30, windowMs: 60 * 1000 });
-const publicAiLimiter = rateLimit({ key: 'pub-ai', max: 15, windowMs: 10 * 60 * 1000, message: 'Muitas solicitações ao assistente. Tente novamente em alguns minutos.' });
+const publicAiLimiter = rateLimit({ key: 'pub-ai', max: 15, windowMs: 10 * 60 * 1000, message: 'Muitas solicitaÃ§Ãµes ao assistente. Tente novamente em alguns minutos.' });
 const authLimiter = rateLimit({ key: 'auth', max: 20, windowMs: 10 * 60 * 1000 });
-const resetLimiter = rateLimit({ key: 'reset', max: 5, windowMs: 15 * 60 * 1000, message: 'Muitas solicitações de recuperação. Aguarde 15 minutos.' });
+const resetLimiter = rateLimit({ key: 'reset', max: 5, windowMs: 15 * 60 * 1000, message: 'Muitas solicitaÃ§Ãµes de recuperaÃ§Ã£o. Aguarde 15 minutos.' });
 const adminOnly = [authenticateStaff, requireRole('super_admin', 'administrador')] as const;
 
 // Lazy-initialized Gemini Client
@@ -211,7 +303,7 @@ function getGeminiClient(): GoogleGenAI {
   return geminiClient;
 }
 
-// Saúde do sistema (pública e mínima: sem detalhes internos)
+// SaÃºde do sistema (pÃºblica e mÃ­nima: sem detalhes internos)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -226,13 +318,13 @@ app.get('/api/health/ready', (req, res) => {
     initializeOrders();
     res.json({ ready: true, time: new Date().toISOString() });
   } catch (err: any) {
-    res.status(503).json({ ready: false, error: 'Armazenamento indisponível' });
+    res.status(503).json({ ready: false, error: 'Armazenamento indisponÃ­vel' });
   }
 });
 
-// Diagnóstico de persistência: só admin vê o caminho real do disco. Ajuda a
-// detectar em produção se o sistema está gravando em um disco efêmero
-// (sintoma: este endpoint reporta "primeira execução" a cada novo deploy).
+// DiagnÃ³stico de persistÃªncia: sÃ³ admin vÃª o caminho real do disco. Ajuda a
+// detectar em produÃ§Ã£o se o sistema estÃ¡ gravando em um disco efÃªmero
+// (sintoma: este endpoint reporta "primeira execuÃ§Ã£o" a cada novo deploy).
 app.get('/api/system/persistence-check', ...adminOnly, (req, res) => {
   const info = checkDataPersistence();
   res.json({
@@ -240,27 +332,27 @@ app.get('/api/system/persistence-check', ...adminOnly, (req, res) => {
     dataDirFromEnv: Boolean(process.env.DATA_DIR?.trim()),
     looksLikeFreshDisk: !info.usersExisted && !info.markerExisted,
     warning: !process.env.DATA_DIR?.trim()
-      ? 'DATA_DIR não está definida via variável de ambiente. Em plataformas com disco efêmero (ex.: Render sem Persistent Disk), os dados serão perdidos a cada deploy.'
+      ? 'DATA_DIR nÃ£o estÃ¡ definida via variÃ¡vel de ambiente. Em plataformas com disco efÃªmero (ex.: Render sem Persistent Disk), os dados serÃ£o perdidos a cada deploy.'
       : null,
   });
 });
 
-// Token assinado para o QR físico de uma mesa.
-// BUG CORRIGIDO: exigia 'can_configure_restaurant', permissão que só o
-// super_admin possui por padrão. Como resultado, garçom/caixa/administrador
-// (que são quem realmente reimprime QR de mesa e pré-visualiza o cardápio
-// do cliente no dia a dia) recebiam 403 e o QR "não gerava". Ajustado para
-// 'can_create_orders', a mesma permissão operacional de quem atende mesas.
+// Token assinado para o QR fÃ­sico de uma mesa.
+// BUG CORRIGIDO: exigia 'can_configure_restaurant', permissÃ£o que sÃ³ o
+// super_admin possui por padrÃ£o. Como resultado, garÃ§om/caixa/administrador
+// (que sÃ£o quem realmente reimprime QR de mesa e prÃ©-visualiza o cardÃ¡pio
+// do cliente no dia a dia) recebiam 403 e o QR "nÃ£o gerava". Ajustado para
+// 'can_create_orders', a mesma permissÃ£o operacional de quem atende mesas.
 app.get('/api/table/access-token', authenticateStaff, requirePermission('can_create_orders'), (req, res) => {
   const requestedSlug = String(req.query.slug || '');
   const scopedSlug = resolveScopedSlug(req, requestedSlug);
   const table = Number(req.query.table);
 
   if (!scopedSlug || !restaurantExists(scopedSlug)) {
-    return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+    return res.status(404).json({ success: false, error: 'Restaurante nÃ£o encontrado.' });
   }
   if (!Number.isInteger(table) || table < 1 || table > 999) {
-    return res.status(400).json({ success: false, error: 'Mesa inválida.' });
+    return res.status(400).json({ success: false, error: 'Mesa invÃ¡lida.' });
   }
 
   const restaurant = getRestaurant(scopedSlug);
@@ -268,19 +360,19 @@ app.get('/api/table/access-token', authenticateStaff, requirePermission('can_cre
     const token = createTableAccessToken(scopedSlug, table);
     return res.json({ success: true, restaurantSlug: scopedSlug, tableNumber: table, token, restaurantName: restaurant?.name || scopedSlug });
   } catch (error: any) {
-    return res.status(503).json({ success: false, error: error?.message || 'QR seguro indisponível: configure a chave da mesa.' });
+    return res.status(503).json({ success: false, error: error?.message || 'QR seguro indisponÃ­vel: configure a chave da mesa.' });
   }
 });
 
 // ==========================================
-// V9 PLUS ULTRA 04 — MESAS E QR CODES (QR permanente por mesa)
+// V9 PLUS ULTRA 04 â€” MESAS E QR CODES (QR permanente por mesa)
 // ==========================================
 
 // Lista as mesas cadastradas do restaurante (para o painel "Mesas e QR Codes" do Caixa/Admin).
 app.get('/api/tables/:slug/list', authenticateStaff, requirePermission('can_view_orders'), (req, res) => {
   const scopedSlug = resolveScopedSlug(req, req.params.slug);
   if (!scopedSlug || !restaurantExists(scopedSlug)) {
-    return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+    return res.status(404).json({ success: false, error: 'Restaurante nÃ£o encontrado.' });
   }
   res.json({ success: true, tables: listTables(scopedSlug) });
 });
@@ -290,48 +382,48 @@ app.post('/api/tables/:slug/:number/ensure', authenticateStaff, requirePermissio
   const scopedSlug = resolveScopedSlug(req, req.params.slug);
   const number = Number(req.params.number);
   if (!scopedSlug || !restaurantExists(scopedSlug)) {
-    return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+    return res.status(404).json({ success: false, error: 'Restaurante nÃ£o encontrado.' });
   }
   if (!Number.isInteger(number) || number < 1 || number > 999) {
-    return res.status(400).json({ success: false, error: 'Mesa inválida.' });
+    return res.status(400).json({ success: false, error: 'Mesa invÃ¡lida.' });
   }
   res.json({ success: true, table: ensureTable(scopedSlug, number) });
 });
 
-// CAIXA decide se a mesa está aceitando pedidos pelo QR (🟢 ATIVA / 🔴 BLOQUEADA).
-// Não cancela pedidos já enviados — apenas bloqueia NOVOS pedidos pelo QR.
+// CAIXA decide se a mesa estÃ¡ aceitando pedidos pelo QR (ðŸŸ¢ ATIVA / ðŸ”´ BLOQUEADA).
+// NÃ£o cancela pedidos jÃ¡ enviados â€” apenas bloqueia NOVOS pedidos pelo QR.
 app.post('/api/tables/:slug/:number/toggle', authenticateStaff, requirePermission('can_change_status'), (req, res) => {
   const scopedSlug = resolveScopedSlug(req, req.params.slug);
   const number = Number(req.params.number);
   const active = Boolean(req.body?.active);
   if (!scopedSlug || !restaurantExists(scopedSlug)) {
-    return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+    return res.status(404).json({ success: false, error: 'Restaurante nÃ£o encontrado.' });
   }
   if (!Number.isInteger(number) || number < 1 || number > 999) {
-    return res.status(400).json({ success: false, error: 'Mesa inválida.' });
+    return res.status(400).json({ success: false, error: 'Mesa invÃ¡lida.' });
   }
   res.json({ success: true, table: setTableActive(scopedSlug, number, active) });
 });
 
-// PÚBLICO — resolvido quando o cliente escaneia o QR PERMANENTE da mesa
-// (link estável: /{slug}/mesa/{numero}, sem token na URL). Se a mesa estiver
-// ativa, emite uma senha/QR de sessão válida (reaproveitando createTableAccessToken
-// e todo o fluxo de pedidos já existente); se bloqueada, devolve a mensagem
+// PÃšBLICO â€” resolvido quando o cliente escaneia o QR PERMANENTE da mesa
+// (link estÃ¡vel: /{slug}/mesa/{numero}, sem token na URL). Se a mesa estiver
+// ativa, emite uma senha/QR de sessÃ£o vÃ¡lida (reaproveitando createTableAccessToken
+// e todo o fluxo de pedidos jÃ¡ existente); se bloqueada, devolve a mensagem
 // que o cliente deve ver, sem emitir token nenhum.
 app.get('/api/tables/:slug/:number/qr-access', (req, res) => {
   const scopedSlug = String(req.params.slug || '').trim().toLowerCase();
   const number = Number(req.params.number);
   if (!scopedSlug || !restaurantExists(scopedSlug)) {
-    return res.status(404).json({ success: false, error: 'Restaurante não encontrado.' });
+    return res.status(404).json({ success: false, error: 'Restaurante nÃ£o encontrado.' });
   }
   if (!Number.isInteger(number) || number < 1 || number > 999) {
-    return res.status(400).json({ success: false, error: 'Mesa inválida.' });
+    return res.status(400).json({ success: false, error: 'Mesa invÃ¡lida.' });
   }
   if (!isTableActive(scopedSlug, number)) {
     return res.json({
       success: true,
       active: false,
-      message: 'Pedidos pela mesa estão temporariamente desativados. Aguarde o atendimento.',
+      message: 'Pedidos pela mesa estÃ£o temporariamente desativados. Aguarde o atendimento.',
     });
   }
   try {
@@ -346,19 +438,19 @@ app.get('/api/tables/:slug/:number/qr-access', (req, res) => {
       tableAccessToken: token,
     });
   } catch (error: any) {
-    return res.status(503).json({ success: false, error: error?.message || 'QR seguro indisponível.' });
+    return res.status(503).json({ success: false, error: error?.message || 'QR seguro indisponÃ­vel.' });
   }
 });
 
 app.get('/api/:slug/health', (req, res) => {
   const { slug } = req.params;
   if (!restaurantExists(slug)) {
-    return res.status(404).json({ error: 'Restaurante não encontrado' });
+    return res.status(404).json({ error: 'Restaurante nÃ£o encontrado' });
   }
   res.json({ restaurant: slug, status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Diagnóstico de configuração (somente administradores)
+// DiagnÃ³stico de configuraÃ§Ã£o (somente administradores)
 app.get('/api/config/status', ...adminOnly, (req, res) => {
   res.json({
     status: 'ok',
@@ -389,7 +481,7 @@ app.post('/api/upload/image', ...adminOnly, async (req, res) => {
   try {
     const { image, folder } = req.body;
     if (!image) {
-      return res.status(400).json({ success: false, error: 'Imagem não fornecida (formato base64 ou URL).' });
+      return res.status(400).json({ success: false, error: 'Imagem nÃ£o fornecida (formato base64 ou URL).' });
     }
 
     const result = await uploadImageToCloudinary({
@@ -447,16 +539,16 @@ app.post('/api/ai/recommend', publicAiLimiter, async (req, res) => {
       // Graceful fallback recommendations if API key is not yet set
       return res.json({
         recommendation:
-          'Sugestão do Chef: Experimente harmonizar seu pedido com uma bebida artesanal gelada ou finalize com uma das nossas sobremesas tradicionais da casa!',
+          'SugestÃ£o do Chef: Experimente harmonizar seu pedido com uma bebida artesanal gelada ou finalize com uma das nossas sobremesas tradicionais da casa!',
         fallback: true,
       });
     }
 
     const ai = getGeminiClient();
-    const prompt = `Você é o Chef e Sommelier do restaurante "${restaurantSlug}" na plataforma Tokio inBox.
+    const prompt = `VocÃª Ã© o Chef e Sommelier do restaurante "${restaurantSlug}" na plataforma Tokio inBox.
 Itens no carrinho do cliente: ${JSON.stringify(currentItems || [])}.
-Preferência do cliente: ${preference || 'Geral'}.
-Responda em português brasileiro de forma acolhedora, objetiva e sucinta (máximo 2 a 3 frases) recomendando uma harmonização perfeita de bebida ou sobremesa que combine idealmente com os pratos escolhidos.`;
+PreferÃªncia do cliente: ${preference || 'Geral'}.
+Responda em portuguÃªs brasileiro de forma acolhedora, objetiva e sucinta (mÃ¡ximo 2 a 3 frases) recomendando uma harmonizaÃ§Ã£o perfeita de bebida ou sobremesa que combine idealmente com os pratos escolhidos.`;
 
     const response = await ai.models.generateContent({
       model: getGeminiModel(),
@@ -464,14 +556,14 @@ Responda em português brasileiro de forma acolhedora, objetiva e sucinta (máxi
     });
 
     res.json({
-      recommendation: response.text || 'Recomendação indisponível no momento.',
+      recommendation: response.text || 'RecomendaÃ§Ã£o indisponÃ­vel no momento.',
       fallback: false,
     });
   } catch (error: any) {
     console.error('Gemini AI error:', error);
     res.json({
       recommendation:
-        'Sugestão do Chef: Aproveite para adicionar uma bebida refrescante ou nossa sobremesa artesanal para uma experiência gastronômica completa!',
+        'SugestÃ£o do Chef: Aproveite para adicionar uma bebida refrescante ou nossa sobremesa artesanal para uma experiÃªncia gastronÃ´mica completa!',
       fallback: true,
     });
   }
@@ -483,7 +575,7 @@ app.post('/api/ai/smart-ticket', authenticateStaff, async (req, res) => {
     const { order, restaurantName } = req.body;
 
     if (!order) {
-      return res.status(400).json({ error: 'Dados do pedido são obrigatórios' });
+      return res.status(400).json({ error: 'Dados do pedido sÃ£o obrigatÃ³rios' });
     }
 
     if (!process.env.GEMINI_API_KEY) {
@@ -492,16 +584,16 @@ app.post('/api/ai/smart-ticket', authenticateStaff, async (req, res) => {
       const hasSpecialNotes = Boolean(order.notes || order.items?.some((i: any) => i.notes));
       return res.json({
         stationRouting: [
-          `Estação Principal (${restaurantName || 'Cozinha'}): ${itemsList.slice(0, 3).join(', ')}`,
-          'Estação de Expedição & Embalagem: Conferir lacre térmico e adicionais',
+          `EstaÃ§Ã£o Principal (${restaurantName || 'Cozinha'}): ${itemsList.slice(0, 3).join(', ')}`,
+          'EstaÃ§Ã£o de ExpediÃ§Ã£o & Embalagem: Conferir lacre tÃ©rmico e adicionais',
         ],
         allergyWarnings: hasSpecialNotes
-          ? [`Atenção aos detalhes informados pelo cliente: "${order.notes || 'Ver observações nos itens'}"`]
-          : ['Nenhuma restrição alimentar crítica indicada pelo cliente'],
+          ? [`AtenÃ§Ã£o aos detalhes informados pelo cliente: "${order.notes || 'Ver observaÃ§Ãµes nos itens'}"`]
+          : ['Nenhuma restriÃ§Ã£o alimentar crÃ­tica indicada pelo cliente'],
         preparationSequence: [
-          '1. Separar insumos refrigerados e pré-aquecer estação',
-          '2. Montagem e cocção dos itens principais em lote',
-          '3. Finalização, guarnição e despacho com comanda',
+          '1. Separar insumos refrigerados e prÃ©-aquecer estaÃ§Ã£o',
+          '2. Montagem e cocÃ§Ã£o dos itens principais em lote',
+          '3. FinalizaÃ§Ã£o, guarniÃ§Ã£o e despacho com comanda',
         ],
         estimatedPrepMinutes: 20,
         chefMessage: 'Preparado artesanalmente com ingredientes selecionados. Bom apetite!',
@@ -510,17 +602,17 @@ app.post('/api/ai/smart-ticket', authenticateStaff, async (req, res) => {
     }
 
     const ai = getGeminiClient();
-    const prompt = `Você é um Gerente de Cozinha Inteligente (Smart Kitchen AI) do sistema Tokio inBox.
+    const prompt = `VocÃª Ã© um Gerente de Cozinha Inteligente (Smart Kitchen AI) do sistema Tokio inBox.
 Analise este pedido para o restaurante "${restaurantName || order.restaurantName}":
-Código: ${order.shortCode}
+CÃ³digo: ${order.shortCode}
 Modalidade: ${order.orderType} (Mesa: ${order.tableNumber || 'N/A'})
 Itens: ${JSON.stringify(order.items?.map((i: any) => ({ name: i.name, qty: i.quantity, notes: i.notes, options: i.selectedOptions })) || [])}
-Observação Geral: ${order.notes || 'Nenhuma'}
+ObservaÃ§Ã£o Geral: ${order.notes || 'Nenhuma'}
 
-Responda APENAS um objeto JSON válido (sem blocos markdown extras) com a seguinte estrutura:
+Responda APENAS um objeto JSON vÃ¡lido (sem blocos markdown extras) com a seguinte estrutura:
 {
-  "stationRouting": ["Estação 1: ...", "Estação 2: ..."],
-  "allergyWarnings": ["Atenção: ..."],
+  "stationRouting": ["EstaÃ§Ã£o 1: ...", "EstaÃ§Ã£o 2: ..."],
+  "allergyWarnings": ["AtenÃ§Ã£o: ..."],
   "preparationSequence": ["1. ...", "2. ...", "3. ..."],
   "estimatedPrepMinutes": 20,
   "chefMessage": "Frase curta de agradecimento e carinho para imprimir no cupom do cliente"
@@ -537,20 +629,20 @@ Responda APENAS um objeto JSON válido (sem blocos markdown extras) com a seguin
     const parsed = JSON.parse(response.text || '{}');
     res.json({
       stationRouting: parsed.stationRouting || ['Cozinha Geral'],
-      allergyWarnings: parsed.allergyWarnings || ['Verificar observações do pedido'],
+      allergyWarnings: parsed.allergyWarnings || ['Verificar observaÃ§Ãµes do pedido'],
       preparationSequence: parsed.preparationSequence || ['Iniciar preparo conforme ordem dos itens'],
       estimatedPrepMinutes: parsed.estimatedPrepMinutes || 22,
-      chefMessage: parsed.chefMessage || 'Agradecemos sua preferência! Feito com carinho e dedicação.',
+      chefMessage: parsed.chefMessage || 'Agradecemos sua preferÃªncia! Feito com carinho e dedicaÃ§Ã£o.',
       fallback: false,
     });
   } catch (error: any) {
     console.error('Smart Ticket AI error:', error);
     res.json({
       stationRouting: ['Cozinha Central / Sushibar / Grelha'],
-      allergyWarnings: ['Conferir observações manuais do cliente'],
+      allergyWarnings: ['Conferir observaÃ§Ãµes manuais do cliente'],
       preparationSequence: ['1. Preparo dos pratos principais', '2. Embalagem e despacho'],
       estimatedPrepMinutes: 20,
-      chefMessage: 'Feito com carinho por nossa equipe gastronômica!',
+      chefMessage: 'Feito com carinho por nossa equipe gastronÃ´mica!',
       fallback: true,
     });
   }
@@ -589,14 +681,14 @@ app.post('/api/ai/concierge', publicAiLimiter, async (req, res) => {
     } = req.body;
 
     if (!customerMessage) {
-      return res.status(400).json({ success: false, error: 'Mensagem do cliente é obrigatória' });
+      return res.status(400).json({ success: false, error: 'Mensagem do cliente Ã© obrigatÃ³ria' });
     }
 
     const result = await processCustomerConciergeMessage({
       restaurantName: restaurantName || 'Aura Prime Gastronomia',
       restaurantSlug: restaurantSlug || 'japones',
       isOpen: Boolean(isOpen),
-      openingHours: openingHours || '18:00 às 23:30',
+      openingHours: openingHours || '18:00 Ã s 23:30',
       deliveryFee: Number(deliveryFee) || 0,
       minOrderValue: Number(minOrderValue) || 0,
       realMenuItems: realMenuItems || [],
@@ -609,7 +701,7 @@ app.post('/api/ai/concierge', publicAiLimiter, async (req, res) => {
     console.error('AI Concierge error:', error);
     res.json({
       success: true,
-      responseText: 'Olá! Sou o assistente do restaurante. Como posso te ajudar com o cardápio de hoje?',
+      responseText: 'OlÃ¡! Sou o assistente do restaurante. Como posso te ajudar com o cardÃ¡pio de hoje?',
       suggestedProductIds: [],
       fallback: true,
     });
@@ -667,7 +759,7 @@ app.post('/api/ai/cmv-engineering', ...adminOnly, async (req, res) => {
 });
 
 // ==========================================
-// CENTRAL DE INTELIGÊNCIA DO SISTEMA (AI ENGINE)
+// CENTRAL DE INTELIGÃŠNCIA DO SISTEMA (AI ENGINE)
 // ==========================================
 
 // 1. Get AI Config for a restaurant
@@ -686,7 +778,7 @@ app.put('/api/ai-engine/config', ...adminOnly, (req, res) => {
   try {
     const { restaurantSlug, moduleId, updates, operatorUsername, operatorRole } = req.body;
     if (!restaurantSlug || !moduleId || !updates) {
-      return res.status(400).json({ success: false, error: 'restaurantSlug, moduleId e updates são obrigatórios' });
+      return res.status(400).json({ success: false, error: 'restaurantSlug, moduleId e updates sÃ£o obrigatÃ³rios' });
     }
 
     const updated = updateRestaurantAIConfig(
@@ -705,7 +797,7 @@ app.put('/api/ai-engine/config', ...adminOnly, (req, res) => {
   }
 });
 
-// 3. Get AI Audit Logs (data, hora, usuário, anterior, novo)
+// 3. Get AI Audit Logs (data, hora, usuÃ¡rio, anterior, novo)
 app.get('/api/ai-engine/logs', ...adminOnly, (req, res) => {
   try {
     const slug = req.query.restaurantSlug as string | undefined;
@@ -732,7 +824,7 @@ app.post('/api/ai-engine/resolve-price', ...adminOnly, (req, res) => {
   try {
     const { suggestionId, action, operatorUsername, operatorRole } = req.body;
     if (!suggestionId || !action) {
-      return res.status(400).json({ success: false, error: 'suggestionId e action são obrigatórios' });
+      return res.status(400).json({ success: false, error: 'suggestionId e action sÃ£o obrigatÃ³rios' });
     }
 
     const result = resolvePriceSuggestion(
@@ -769,7 +861,7 @@ app.post('/api/ai-engine/customer-concierge', publicAiLimiter, async (req, res) 
       restaurantSlug: restaurantSlug || 'japones',
       restaurantName: restaurantName || 'Restaurante Tokio inBox',
       isOpen: Boolean(isOpen),
-      openingHours: openingHours || '18:00 às 23:30',
+      openingHours: openingHours || '18:00 Ã s 23:30',
       deliveryFee: Number(deliveryFee) || 0,
       minOrderValue: Number(minOrderValue) || 0,
       menuItems: Array.isArray(menuItems) ? menuItems : [],
@@ -863,15 +955,15 @@ app.post('/api/ai-engine/simulate', ...adminOnly, async (req, res) => {
 });
 
 function routeOrderToPrint(order: any, sourceItems?: any[], operationKey?: string, opts?: { skipAutoPrint?: boolean }) {
-  // V9 PLUS ULTRA 04 — OFFLINE 100%: quando o pedido/itens já foram impressos
+  // V9 PLUS ULTRA 04 â€” OFFLINE 100%: quando o pedido/itens jÃ¡ foram impressos
   // localmente no dispositivo (via window.print(), sem depender do servidor)
   // durante uma queda de internet, o cliente marca `skipAutoPrint: true` no
   // payload para o servidor NUNCA duplicar o ticket ao sincronizar depois.
   if (opts?.skipAutoPrint) return [];
 
-  // ENVIO AUTOMÁTICO AOS SETORES: ao enviar o pedido, o sistema manda os itens
+  // ENVIO AUTOMÃTICO AOS SETORES: ao enviar o pedido, o sistema manda os itens
   // direto para cada setor (cozinha / sushi bar / bar) sem depender do Kanban.
-  // O botão em Ferramentas pode desligar o envio automático; o Kanban ligado
+  // O botÃ£o em Ferramentas pode desligar o envio automÃ¡tico; o Kanban ligado
   // ou desligado NUNCA interfere aqui.
   const settings = getSystemSettings();
   if (settings.autoSendToStations === false) return [];
@@ -880,12 +972,12 @@ function routeOrderToPrint(order: any, sourceItems?: any[], operationKey?: strin
   const source = Array.isArray(sourceItems) && sourceItems.length ? sourceItems : (order.items || []);
   if (!source.length) return jobs;
   const byStation: Record<string, any[]> = {};
-  // V9.2: um item pode ir para VÁRIOS setores (ex.: Hot Philadelphia → cozinha + sushi bar).
-  // A impressão NÃO depende do KDS: este roteamento roda no servidor, com KDS ligado ou desligado.
+  // V9.2: um item pode ir para VÃRIOS setores (ex.: Hot Philadelphia â†’ cozinha + sushi bar).
+  // A impressÃ£o NÃƒO depende do KDS: este roteamento roda no servidor, com KDS ligado ou desligado.
   for (const item of source) {
-    // CORREÇÃO: antes só reconhecia "sushi" no nome e tudo o mais ia para a
-    // cozinha (bebida/temaki/sashimi saíam no setor errado, principalmente nos
-    // itens adicionados à mesa). Agora usa a MESMA classificação do pedido
+    // CORREÃ‡ÃƒO: antes sÃ³ reconhecia "sushi" no nome e tudo o mais ia para a
+    // cozinha (bebida/temaki/sashimi saÃ­am no setor errado, principalmente nos
+    // itens adicionados Ã  mesa). Agora usa a MESMA classificaÃ§Ã£o do pedido
     // (resolveItemStation), que respeita o setor cadastrado no produto.
     const primary = resolveItemStation(String(item.name || ''), item.station);
     const configured: string[] = Array.isArray(item.printStations)
@@ -898,12 +990,12 @@ function routeOrderToPrint(order: any, sourceItems?: any[], operationKey?: strin
     }
   }
   const stationMap: Record<string, any> = { cozinha: 'COZINHA', sushibar: 'SUSHI_BAR', bar: 'BAR' };
-  // Chave estável (não muda a cada segundo) para o anti-duplicidade funcionar de verdade.
+  // Chave estÃ¡vel (nÃ£o muda a cada segundo) para o anti-duplicidade funcionar de verdade.
   const opKey = operationKey || 'initial';
   for (const [stationKey, items] of Object.entries(byStation)) {
     const station = stationMap[stationKey];
     if (!station) continue;
-    // Impressão ativa por setor (botão em Ferramentas). Padrão: todos ligados.
+    // ImpressÃ£o ativa por setor (botÃ£o em Ferramentas). PadrÃ£o: todos ligados.
     if ((settings.stationPrint as any)?.[stationKey] === false) continue;
     const itemsSig = items.map((i: any) => `${i.id || i.name}:${i.quantity}:${i.notes || ''}`).join('|');
     jobs.push(enqueuePrintJob({
@@ -929,20 +1021,20 @@ function routeOrderToPrint(order: any, sourceItems?: any[], operationKey?: strin
   return jobs;
 }
 
-// V9 PLUS ULTRA 04 — seções 8, 9 e 10: comanda da cozinha otimizada para
-// leitura rápida durante o preparo. Hierarquia visual (do mais para o menos
-// destacado): 1º MESA, 2º PEDIDO, 3º itens+quantidade, 4º observações,
-// 5º demais informações. Usa comandos ESC/POS padrão (negrito e fonte
-// duplicada/triplicada) — o campo é `rawEscPos` porque o Print Agent envia
-// estes bytes direto para a impressora térmica, então os comandos abaixo
-// são respeitados por qualquer impressora ESC/POS comum (Epson, Elgin, etc.).
+// V9 PLUS ULTRA 04 â€” seÃ§Ãµes 8, 9 e 10: comanda da cozinha otimizada para
+// leitura rÃ¡pida durante o preparo. Hierarquia visual (do mais para o menos
+// destacado): 1Âº MESA, 2Âº PEDIDO, 3Âº itens+quantidade, 4Âº observaÃ§Ãµes,
+// 5Âº demais informaÃ§Ãµes. Usa comandos ESC/POS padrÃ£o (negrito e fonte
+// duplicada/triplicada) â€” o campo Ã© `rawEscPos` porque o Print Agent envia
+// estes bytes direto para a impressora tÃ©rmica, entÃ£o os comandos abaixo
+// sÃ£o respeitados por qualquer impressora ESC/POS comum (Epson, Elgin, etc.).
 const ESC = '\x1B';
 const GS = '\x1D';
 const BOLD_ON = `${ESC}E\x01`;
 const BOLD_OFF = `${ESC}E\x00`;
-const SIZE_HUGE = `${GS}!\x33`; // 4x largura e altura — MESA / PEDIDO
-const SIZE_BIG = `${GS}!\x11`; // 2x largura e altura — itens + quantidade
-const SIZE_MED = `${GS}!\x01`; // 2x altura apenas — observações
+const SIZE_HUGE = `${GS}!\x33`; // 4x largura e altura â€” MESA / PEDIDO
+const SIZE_BIG = `${GS}!\x11`; // 2x largura e altura â€” itens + quantidade
+const SIZE_MED = `${GS}!\x01`; // 2x altura apenas â€” observaÃ§Ãµes
 const SIZE_NORMAL = `${GS}!\x00`;
 const ALIGN_CENTER = `${ESC}a\x01`;
 const ALIGN_LEFT = `${ESC}a\x00`;
@@ -952,20 +1044,20 @@ function buildKitchenTicket(order: any, items: any[], operationKey?: string): st
   const lines: string[] = [];
   lines.push(`${ALIGN_CENTER}${LINE}`);
 
-  // 1º — MESA (maior destaque de todos)
+  // 1Âº â€” MESA (maior destaque de todos)
   if (order.tableNumber) {
     lines.push(`${BOLD_ON}${SIZE_HUGE}MESA ${order.tableNumber}${SIZE_NORMAL}${BOLD_OFF}`);
   } else {
-    // Delivery/Retirada também têm itens roteados por setor (ex.: bebida no bar) — sem número de mesa.
-    const originLabel = order.orderType === 'delivery' ? 'DELIVERY' : order.orderType === 'retirada' || order.orderType === 'balcao' ? 'BALCÃO' : 'PEDIDO ONLINE';
+    // Delivery/Retirada tambÃ©m tÃªm itens roteados por setor (ex.: bebida no bar) â€” sem nÃºmero de mesa.
+    const originLabel = order.orderType === 'delivery' ? 'DELIVERY' : order.orderType === 'retirada' || order.orderType === 'balcao' ? 'BALCÃƒO' : 'PEDIDO ONLINE';
     lines.push(`${BOLD_ON}${SIZE_HUGE}${originLabel}${SIZE_NORMAL}${BOLD_OFF}`);
   }
 
-  // 2º — NÚMERO DO PEDIDO
+  // 2Âº â€” NÃšMERO DO PEDIDO
   lines.push(`${BOLD_ON}${SIZE_BIG}PEDIDO ${order.shortCode}${SIZE_NORMAL}${BOLD_OFF}`);
   lines.push(`${LINE}${ALIGN_LEFT}`);
 
-  // 3º — ITENS E QUANTIDADES (quantidade + produto sempre em negrito e fonte grande)
+  // 3Âº â€” ITENS E QUANTIDADES (quantidade + produto sempre em negrito e fonte grande)
   for (const item of items) {
     lines.push(`${BOLD_ON}${SIZE_BIG}${item.quantity}x ${String(item.name || '').toUpperCase()}${SIZE_NORMAL}${BOLD_OFF}`);
     const options: string[] = Array.isArray(item.selectedOptions)
@@ -974,14 +1066,14 @@ function buildKitchenTicket(order: any, items: any[], operationKey?: string): st
     for (const opt of options) {
       lines.push(`${SIZE_MED}  + ${String(opt).toUpperCase()}${SIZE_NORMAL}`);
     }
-    // 4º — OBSERVAÇÕES do item (médio, negrito, mas abaixo do item)
+    // 4Âº â€” OBSERVAÃ‡Ã•ES do item (mÃ©dio, negrito, mas abaixo do item)
     if (item.notes) {
       lines.push(`${BOLD_ON}${SIZE_MED}OBS: ${String(item.notes).toUpperCase()}${SIZE_NORMAL}${BOLD_OFF}`);
     }
   }
 
   lines.push(LINE);
-  // 5º — demais informações (tamanho normal, sem negrito)
+  // 5Âº â€” demais informaÃ§Ãµes (tamanho normal, sem negrito)
   lines.push(`${ALIGN_CENTER}OP ${operationKey || 'initial'}`);
   lines.push(new Date().toLocaleString('pt-BR'));
   lines.push(`${LINE}\n\n`);
@@ -1009,7 +1101,7 @@ app.post('/api/print-agent/jobs', authenticateStaffOrAgent, (req, res) => {
   try {
     const { orderId, orderShortCode, restaurantSlug, station, rawEscPos, printerId } = req.body;
     if (!orderId || !restaurantSlug || !station) {
-      return res.status(400).json({ success: false, error: 'Dados incompletos para envio de impressão' });
+      return res.status(400).json({ success: false, error: 'Dados incompletos para envio de impressÃ£o' });
     }
 
     const result = enqueuePrintJob({
@@ -1038,11 +1130,11 @@ app.patch('/api/print-agent/jobs/:jobId/status', authenticateStaffOrAgent, (req,
   try {
     const { status, errorMessage } = req.body;
     if (!status) {
-      return res.status(400).json({ success: false, error: 'Status é obrigatório' });
+      return res.status(400).json({ success: false, error: 'Status Ã© obrigatÃ³rio' });
     }
     const updated = updatePrintJobStatus(req.params.jobId, status, errorMessage);
     if (!updated) {
-      return res.status(404).json({ success: false, error: 'Trabalho de impressão não encontrado' });
+      return res.status(404).json({ success: false, error: 'Trabalho de impressÃ£o nÃ£o encontrado' });
     }
     res.json({ success: true, job: updated });
   } catch (error: any) {
@@ -1055,7 +1147,7 @@ app.post('/api/print-agent/jobs/:jobId/retry', authenticateStaffOrAgent, (req, r
   try {
     const retried = retryPrintJob(req.params.jobId);
     if (!retried) {
-      return res.status(404).json({ success: false, error: 'Trabalho de impressão não encontrado' });
+      return res.status(404).json({ success: false, error: 'Trabalho de impressÃ£o nÃ£o encontrado' });
     }
     res.json({ success: true, job: retried });
   } catch (error: any) {
@@ -1083,15 +1175,15 @@ app.post('/api/print-agent/printers', authenticateStaffOrAgent, (req, res) => {
   }
 });
 
-// BUG CORRIGIDO: 'can_manage_settings' não existe em UserPermissions (não é
-// pego pelo bundler/esbuild em runtime, só pelo typecheck) — na prática a
-// checagem de permissão falhava sempre e NINGUÉM conseguia excluir uma
-// impressora, nem o administrador. Alinhado com a mesma permissão já usada
-// para as demais configurações do restaurante (ex.: QR da mesa).
+// BUG CORRIGIDO: 'can_manage_settings' nÃ£o existe em UserPermissions (nÃ£o Ã©
+// pego pelo bundler/esbuild em runtime, sÃ³ pelo typecheck) â€” na prÃ¡tica a
+// checagem de permissÃ£o falhava sempre e NINGUÃ‰M conseguia excluir uma
+// impressora, nem o administrador. Alinhado com a mesma permissÃ£o jÃ¡ usada
+// para as demais configuraÃ§Ãµes do restaurante (ex.: QR da mesa).
 app.delete('/api/print-agent/printers/:printerId', authenticateStaff, requirePermission('can_configure_restaurant'), (req, res) => {
   try {
     const removed = deletePrinter(req.params.printerId, req.query.slug as string | undefined);
-    if (!removed) return res.status(404).json({ success: false, error: 'Impressora não encontrada.' });
+    if (!removed) return res.status(404).json({ success: false, error: 'Impressora nÃ£o encontrada.' });
     res.json({ success: true });
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message });
@@ -1140,7 +1232,7 @@ app.post('/api/customer/login', authLimiter, (req, res) => {
   }
 });
 
-// 3. Customer Logout (Encerramento de sessão segura)
+// 3. Customer Logout (Encerramento de sessÃ£o segura)
 app.post('/api/customer/logout', (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -1148,7 +1240,7 @@ app.post('/api/customer/logout', (req, res) => {
     if (token) {
       logoutCustomerSession(token);
     }
-    res.json({ success: true, message: 'Sessão encerrada com sucesso.' });
+    res.json({ success: true, message: 'SessÃ£o encerrada com sucesso.' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1158,7 +1250,7 @@ app.post('/api/customer/logout', (req, res) => {
 app.get('/api/customer/me', (req, res) => {
   const customer = getAuthenticatedCustomer(req);
   if (!customer) {
-    return res.status(401).json({ success: false, error: 'Sessão não autenticada ou expirada.' });
+    return res.status(401).json({ success: false, error: 'SessÃ£o nÃ£o autenticada ou expirada.' });
   }
   res.json({ success: true, customer });
 });
@@ -1167,7 +1259,7 @@ app.get('/api/customer/me', (req, res) => {
 app.patch('/api/customer/profile', (req, res) => {
   const customer = getAuthenticatedCustomer(req);
   if (!customer) {
-    return res.status(401).json({ success: false, error: 'Sessão não autenticada.' });
+    return res.status(401).json({ success: false, error: 'SessÃ£o nÃ£o autenticada.' });
   }
   const result = updateCustomerProfile(customer.id, req.body);
   res.json(result);
@@ -1177,7 +1269,7 @@ app.patch('/api/customer/profile', (req, res) => {
 app.post('/api/customer/addresses', (req, res) => {
   const customer = getAuthenticatedCustomer(req);
   if (!customer) {
-    return res.status(401).json({ success: false, error: 'Sessão não autenticada.' });
+    return res.status(401).json({ success: false, error: 'SessÃ£o nÃ£o autenticada.' });
   }
   const result = saveCustomerAddress(customer.id, req.body);
   res.json(result);
@@ -1186,7 +1278,7 @@ app.post('/api/customer/addresses', (req, res) => {
 app.delete('/api/customer/addresses/:id', (req, res) => {
   const customer = getAuthenticatedCustomer(req);
   if (!customer) {
-    return res.status(401).json({ success: false, error: 'Sessão não autenticada.' });
+    return res.status(401).json({ success: false, error: 'SessÃ£o nÃ£o autenticada.' });
   }
   const result = deleteCustomerAddress(customer.id, req.params.id);
   res.json(result);
@@ -1197,7 +1289,7 @@ app.post('/api/customer/forgot-password', resetLimiter, async (req, res) => {
   try {
     const { phone } = req.body;
     if (!phone) {
-      return res.status(400).json({ success: false, error: 'WhatsApp é obrigatório.' });
+      return res.status(400).json({ success: false, error: 'WhatsApp Ã© obrigatÃ³rio.' });
     }
     const result = await requestCustomerPasswordReset(phone);
     if (!result.success) {
@@ -1222,11 +1314,11 @@ app.post('/api/customer/reset-password', resetLimiter, (req, res) => {
   }
 });
 
-// 8. Strict Customer Orders (Isolamento total: cliente só vê seus próprios pedidos)
+// 8. Strict Customer Orders (Isolamento total: cliente sÃ³ vÃª seus prÃ³prios pedidos)
 app.get('/api/customer/my-orders', (req, res) => {
   const customer = getAuthenticatedCustomer(req);
   if (!customer) {
-    return res.status(401).json({ success: false, error: 'Sessão não autenticada.' });
+    return res.status(401).json({ success: false, error: 'SessÃ£o nÃ£o autenticada.' });
   }
   const orders = getOrdersByCustomer(customer.id, customer.phoneNormalized);
   res.json({ success: true, count: orders.length, orders });
@@ -1237,7 +1329,7 @@ app.post('/api/customer/auth', authLimiter, (req, res) => {
   try {
     const { phone, name, password } = req.body;
     if (!phone) {
-      return res.status(400).json({ success: false, error: 'Telefone é obrigatório.' });
+      return res.status(400).json({ success: false, error: 'Telefone Ã© obrigatÃ³rio.' });
     }
     // If password provided, attempt login or register
     if (password) {
@@ -1251,7 +1343,7 @@ app.post('/api/customer/auth', authLimiter, (req, res) => {
     // Fallback: invite to set up password
     return res.status(400).json({
       success: false,
-      error: 'Autenticação segura ativa: Por favor, informe sua senha para entrar ou cadastre-se.',
+      error: 'AutenticaÃ§Ã£o segura ativa: Por favor, informe sua senha para entrar ou cadastre-se.',
       requiresPassword: true,
     });
   } catch (error: any) {
@@ -1269,9 +1361,9 @@ interface SSEOrderClient {
 }
 let sseOrderClients: SSEOrderClient[] = [];
 
-// Clientes públicos: recebem apenas atualizações dos próprios pedidos.
-// O ticket é temporário e associa cada conexão aos pares id + token secreto
-// já entregues ao cliente no momento da criação do pedido. Nenhum token é
+// Clientes pÃºblicos: recebem apenas atualizaÃ§Ãµes dos prÃ³prios pedidos.
+// O ticket Ã© temporÃ¡rio e associa cada conexÃ£o aos pares id + token secreto
+// jÃ¡ entregues ao cliente no momento da criaÃ§Ã£o do pedido. Nenhum token Ã©
 // enviado no SSE.
 interface PublicSSETicket { ids: Set<string>; expiresAt: number }
 interface PublicSSEClient { id: string; res: express.Response; orderIds: Set<string> }
@@ -1312,8 +1404,8 @@ export function broadcastOrdersUpdate(eventType: string, order?: any) {
     timestamp: new Date().toISOString(),
   });
 
-  // Atualiza clientes públicos somente quando o pedido pertence à lista
-  // autorizada pelo ticket temporário. A visão pública nunca contém token.
+  // Atualiza clientes pÃºblicos somente quando o pedido pertence Ã  lista
+  // autorizada pelo ticket temporÃ¡rio. A visÃ£o pÃºblica nunca contÃ©m token.
   if (order?.id) {
     const customerPayload = JSON.stringify({
       event: eventType,
@@ -1346,16 +1438,16 @@ export function broadcastOrdersUpdate(eventType: string, order?: any) {
   });
 }
 
-// Ticket de uso único (60s) para abrir o stream: EventSource não envia header Authorization.
+// Ticket de uso Ãºnico (60s) para abrir o stream: EventSource nÃ£o envia header Authorization.
 app.post('/api/orders/stream-ticket', authenticateStaff, (req, res) => {
   res.json({ success: true, ticket: issueStreamTicket(req.userSession!.id) });
 });
 
-// Stream em tempo real: exige ticket válido emitido a um colaborador autenticado.
+// Stream em tempo real: exige ticket vÃ¡lido emitido a um colaborador autenticado.
 app.get('/api/orders/stream', (req, res) => {
   const user = consumeStreamTicket(String(req.query.ticket || ''));
   if (!user) {
-    return res.status(401).json({ success: false, error: 'Ticket de stream inválido ou expirado.', code: 'INVALID_TICKET' });
+    return res.status(401).json({ success: false, error: 'Ticket de stream invÃ¡lido ou expirado.', code: 'INVALID_TICKET' });
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -1400,16 +1492,16 @@ app.post('/api/public/orders/stream-ticket', rateLimit({ key: 'public-stream-tic
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items.filter((x: any) => x && x.id && x.t).slice(0, 30) : [];
     const ticket = issuePublicStreamTicket(items);
-    if (!ticket) return res.status(401).json({ success: false, error: 'Nenhum pedido rastreável encontrado.' });
+    if (!ticket) return res.status(401).json({ success: false, error: 'Nenhum pedido rastreÃ¡vel encontrado.' });
     res.json({ success: true, ticket });
   } catch {
-    res.status(400).json({ success: false, error: 'Não foi possível iniciar o rastreamento em tempo real.' });
+    res.status(400).json({ success: false, error: 'NÃ£o foi possÃ­vel iniciar o rastreamento em tempo real.' });
   }
 });
 
 app.get('/api/public/orders/stream', (req, res) => {
   const data = consumePublicStreamTicket(String(req.query.ticket || ''));
-  if (!data) return res.status(401).json({ success: false, error: 'Ticket de rastreamento inválido ou expirado.' });
+  if (!data) return res.status(401).json({ success: false, error: 'Ticket de rastreamento invÃ¡lido ou expirado.' });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1471,21 +1563,21 @@ app.get('/api/orders/check-idempotency/:key', publicWriteLimiter, (req, res) => 
     return res.json({ exists: false });
   } catch (error: any) {
     console.error('[ORDER ERROR] Erro ao consultar idempotency key:', error);
-    res.status(500).json({ exists: false, error: 'Erro ao verificar idempotência' });
+    res.status(500).json({ exists: false, error: 'Erro ao verificar idempotÃªncia' });
   }
 });
 
 // 3. Get single order by id or shortCode
-// Rastreio público: exige id/código + token secreto do pedido (entregue só a quem fez o pedido)
+// Rastreio pÃºblico: exige id/cÃ³digo + token secreto do pedido (entregue sÃ³ a quem fez o pedido)
 app.get('/api/public/orders/:id', rateLimit({ key: 'track', max: 120, windowMs: 60 * 1000 }), (req, res) => {
   const order = getOrderForTracking(req.params.id, String(req.query.t || ''));
   if (!order) {
-    return res.status(404).json({ success: false, error: 'Pedido não encontrado.' });
+    return res.status(404).json({ success: false, error: 'Pedido nÃ£o encontrado.' });
   }
   res.json({ success: true, order: toCustomerView(order) });
 });
 
-// Vários pedidos de uma vez (carrinho multi-restaurante). Body: { items: [{ id, t }] }
+// VÃ¡rios pedidos de uma vez (carrinho multi-restaurante). Body: { items: [{ id, t }] }
 app.post('/api/public/orders/lookup', rateLimit({ key: 'track-bulk', max: 60, windowMs: 60 * 1000 }), (req, res) => {
   const list = Array.isArray(req.body?.items) ? req.body.items.slice(0, 20) : [];
   const orders = list
@@ -1499,7 +1591,7 @@ app.get('/api/orders/:id', authenticateStaff, requirePermission('can_view_orders
   try {
     const order = getOrderById(req.params.id);
     if (!order || !canAccessRestaurant(req, order.restaurantSlug)) {
-      return res.status(404).json({ success: false, error: 'Pedido não encontrado' });
+      return res.status(404).json({ success: false, error: 'Pedido nÃ£o encontrado' });
     }
     res.json({ success: true, order: toStaffView(order) });
   } catch (error: any) {
@@ -1515,15 +1607,15 @@ app.post('/api/orders', publicWriteLimiter, optionalStaffAuth, (req, res) => {
     const isStaff = Boolean(req.userSession);
     const restaurantSlug = String(payload?.restaurantSlug || '');
     if (isStaff && !canAccessRestaurant(req, restaurantSlug)) {
-      return res.status(403).json({ success: false, error: 'Seu usuário não tem acesso a este restaurante.' });
+      return res.status(403).json({ success: false, error: 'Seu usuÃ¡rio nÃ£o tem acesso a este restaurante.' });
     }
 
-    // Cliente público só pode abrir/adicionar mesa usando o QR assinado daquela mesa.
+    // Cliente pÃºblico sÃ³ pode abrir/adicionar mesa usando o QR assinado daquela mesa.
     if (!isStaff && String(payload?.orderType || '').toLowerCase().includes('mesa')) {
       const tableNumber = Number(payload?.tableNumber);
       const tableToken = typeof payload?.tableAccessToken === 'string' ? payload.tableAccessToken : undefined;
       if (!verifyTableAccessToken(tableToken, restaurantSlug, tableNumber)) {
-        return res.status(403).json({ success: false, error: 'Senha/QR desta mesa inválido ou expirado. Peça uma nova senha à equipe.' });
+        return res.status(403).json({ success: false, error: 'Senha/QR desta mesa invÃ¡lido ou expirado. PeÃ§a uma nova senha Ã  equipe.' });
       }
     }
     const authCust = getAuthenticatedCustomer(req);
@@ -1537,8 +1629,11 @@ app.post('/api/orders', publicWriteLimiter, optionalStaffAuth, (req, res) => {
     const result = createOrderTransactional(payload, { isStaff });
     if (!result.deduplicated) routeOrderToPrint(result.order, undefined, undefined, { skipAutoPrint: !!payload.skipAutoPrint });
 
-    // Broadcast Real-Time SSE update immediately to Garçom, Cozinha, Bar, SushiBar and Client
+    // Broadcast Real-Time SSE update immediately to GarÃ§om, Cozinha, Bar, SushiBar and Client
     broadcastOrdersUpdate('order_created', result.order);
+      if (!isStaff && ['delivery', 'retirada', 'online'].includes(result.order.orderType)) {
+        queueOnlineOrder(result.order);
+      }
 
     // Asynchronously archive to Supabase PostgreSQL if configured
     syncOrderToSupabase(result.order).catch(() => {});
@@ -1546,14 +1641,14 @@ app.post('/api/orders', publicWriteLimiter, optionalStaffAuth, (req, res) => {
     res.status(result.deduplicated ? 200 : 201).json({
       success: true,
       deduplicated: result.deduplicated,
-      // quem criou o pedido recebe o trackingToken; colaboradores recebem a visão de staff
+      // quem criou o pedido recebe o trackingToken; colaboradores recebem a visÃ£o de staff
       order: isStaff ? toStaffView(result.order) : result.order,
       message: result.deduplicated
         ? 'Pedido recuperado com sucesso (idempotente)'
         : 'Pedido salvo com sucesso no banco de dados',
     });
   } catch (error: any) {
-    console.error('[ORDER ERROR] Falha crítica ao criar pedido:', error.message);
+    console.error('[ORDER ERROR] Falha crÃ­tica ao criar pedido:', error.message);
     res.status(400).json({
       success: false,
       error: error.message || 'Falha ao processar e salvar pedido no servidor',
@@ -1571,17 +1666,17 @@ app.patch('/api/orders/:id/status', authenticateStaff, requirePermission('can_ch
       operatorRole?: string;
     };
     if (!status) {
-      return res.status(400).json({ success: false, error: 'Status é obrigatório' });
+      return res.status(400).json({ success: false, error: 'Status Ã© obrigatÃ³rio' });
     }
-    // V9 PLUS ULTRA 01: 'finalizado' de comanda de MESA = finalização financeira (libera a mesa).
-    // Só quem pode receber pagamento; senão bastaria o garçom chamar este PATCH para contornar o Caixa.
+    // V9 PLUS ULTRA 01: 'finalizado' de comanda de MESA = finalizaÃ§Ã£o financeira (libera a mesa).
+    // SÃ³ quem pode receber pagamento; senÃ£o bastaria o garÃ§om chamar este PATCH para contornar o Caixa.
     if (status === 'finalizado') {
       const target = getOrderById(req.params.id);
       if (target?.orderType === 'mesa' && !roleCanReceivePayment(req.userSession?.role, req.userSession?.permissions)) {
         return res.status(403).json({
           success: false,
           code: 'PAYMENT_FORBIDDEN',
-          error: 'Acesso proibido: a finalização da conta da mesa é feita pelo CAIXA após o pagamento.',
+          error: 'Acesso proibido: a finalizaÃ§Ã£o da conta da mesa Ã© feita pelo CAIXA apÃ³s o pagamento.',
         });
       }
     }
@@ -1598,7 +1693,7 @@ app.patch('/api/orders/:id/status', authenticateStaff, requirePermission('can_ch
       userName: req.userSession?.name || operatorName || 'Operador',
       userRole: req.userSession?.role || operatorRole || 'painel',
       action: `Alterou status do pedido ${updated.shortCode} para [${status.toUpperCase()}]`,
-      details: note || `Transição para ${status}`,
+      details: note || `TransiÃ§Ã£o para ${status}`,
       category: 'order',
     });
 
@@ -1609,7 +1704,7 @@ app.patch('/api/orders/:id/status', authenticateStaff, requirePermission('can_ch
   }
 });
 
-// 5b. Update Order Station Status (KDS Praças: Bar, Cozinha, SushiBar)
+// 5b. Update Order Station Status (KDS PraÃ§as: Bar, Cozinha, SushiBar)
 // RECEBIDO -> EM PREPARO -> PEDIDO FEITO
 app.patch('/api/orders/:id/station-status', authenticateStaff, requirePermission('can_change_status'), (req, res) => {
   try {
@@ -1621,10 +1716,10 @@ app.patch('/api/orders/:id/station-status', authenticateStaff, requirePermission
     };
 
     if (!station || !['cozinha', 'sushibar', 'bar'].includes(station)) {
-      return res.status(400).json({ success: false, error: 'Praça inválida (deve ser bar, cozinha ou sushibar)' });
+      return res.status(400).json({ success: false, error: 'PraÃ§a invÃ¡lida (deve ser bar, cozinha ou sushibar)' });
     }
     if (!status || !['recebido', 'em_preparo', 'pedido_feito'].includes(status)) {
-      return res.status(400).json({ success: false, error: 'Status da praça inválido (deve ser recebido, em_preparo ou pedido_feito)' });
+      return res.status(400).json({ success: false, error: 'Status da praÃ§a invÃ¡lido (deve ser recebido, em_preparo ou pedido_feito)' });
     }
 
     const updated = updateOrderStationStatusTransactional(req.params.id, station, status, operatorName);
@@ -1639,7 +1734,7 @@ app.patch('/api/orders/:id/station-status', authenticateStaff, requirePermission
     logAuditAction({
       userName: req.userSession?.name || operatorName || `Operador ${station.toUpperCase()}`,
       userRole: req.userSession?.role || operatorRole || station,
-      action: `Praça [${station.toUpperCase()}] atualizada para [${status.toUpperCase()}] no pedido ${updated.shortCode}`,
+      action: `PraÃ§a [${station.toUpperCase()}] atualizada para [${status.toUpperCase()}] no pedido ${updated.shortCode}`,
       details: `Status geral do pedido: ${updated.status}`,
       category: 'order',
     });
@@ -1651,7 +1746,7 @@ app.patch('/api/orders/:id/station-status', authenticateStaff, requirePermission
   }
 });
 
-// 5c. Append Items to Table Order (Garçom + Cliente synchronization on same table)
+// 5c. Append Items to Table Order (GarÃ§om + Cliente synchronization on same table)
 app.post('/api/orders/table/append', publicWriteLimiter, optionalStaffAuth, (req, res) => {
   try {
     const {
@@ -1670,14 +1765,14 @@ app.post('/api/orders/table/append', publicWriteLimiter, optionalStaffAuth, (req
     const isStaff = Boolean(req.userSession);
     const scopedRestaurantSlug = String(restaurantSlug || '');
     if (isStaff && !canAccessRestaurant(req, scopedRestaurantSlug)) {
-      return res.status(403).json({ success: false, error: 'Seu usuário não tem acesso a este restaurante.' });
+      return res.status(403).json({ success: false, error: 'Seu usuÃ¡rio nÃ£o tem acesso a este restaurante.' });
     }
     if (!isStaff && !verifyTableAccessToken(tableAccessToken, scopedRestaurantSlug, Number(tableNumber))) {
-      return res.status(403).json({ success: false, error: 'Senha/QR desta mesa inválido ou expirado. Peça uma nova senha à equipe.' });
+      return res.status(403).json({ success: false, error: 'Senha/QR desta mesa invÃ¡lido ou expirado. PeÃ§a uma nova senha Ã  equipe.' });
     }
 
     if (!tableNumber || typeof tableNumber !== 'number') {
-      return res.status(400).json({ success: false, error: 'Número de mesa válido é obrigatório' });
+      return res.status(400).json({ success: false, error: 'NÃºmero de mesa vÃ¡lido Ã© obrigatÃ³rio' });
     }
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, error: 'Pelo menos 1 item deve ser informado' });
@@ -1695,14 +1790,14 @@ app.post('/api/orders/table/append', publicWriteLimiter, optionalStaffAuth, (req
       idempotencyKey,
     }, { isStaff });
 
-    // CORREÇÃO: imprime SÓ os itens recém-adicionados, já com o setor resolvido
+    // CORREÃ‡ÃƒO: imprime SÃ“ os itens recÃ©m-adicionados, jÃ¡ com o setor resolvido
     // pelo servidor (antes usava req.body.items cru, sem setor), e NUNCA reimprime
-    // quando é um retry com a mesma idempotencyKey.
+    // quando Ã© um retry com a mesma idempotencyKey.
     if (result.order && !result.deduplicated && result.addedItems.length > 0) {
       routeOrderToPrint(result.order, result.addedItems, req.body.idempotencyKey, { skipAutoPrint: !!req.body.skipAutoPrint });
     }
 
-    // Broadcast Real-Time SSE update immediately to Garçom, Cozinha, Bar, SushiBar and Client
+    // Broadcast Real-Time SSE update immediately to GarÃ§om, Cozinha, Bar, SushiBar and Client
     broadcastOrdersUpdate(result.isNew ? 'order_created' : 'table_items_appended', result.order);
 
     // Asynchronously archive to Supabase
@@ -1729,17 +1824,17 @@ app.post('/api/orders/table/append', publicWriteLimiter, optionalStaffAuth, (req
   }
 });
 
-// 5c-bis. V8 PRO: "Fechar Mesa" (pedir a conta) ≠ "Pagar Mesa". Este endpoint
-// só marca a mesa como aguardando pagamento; não recebe pagamento nem libera
-// a mesa. A liberação/finalização real continua em /close-table abaixo.
+// 5c-bis. V8 PRO: "Fechar Mesa" (pedir a conta) â‰  "Pagar Mesa". Este endpoint
+// sÃ³ marca a mesa como aguardando pagamento; nÃ£o recebe pagamento nem libera
+// a mesa. A liberaÃ§Ã£o/finalizaÃ§Ã£o real continua em /close-table abaixo.
 app.post('/api/tables/:tableNumber/request-bill', authenticateStaff, requirePermission('can_change_status'), (req, res) => {
   try {
     const { restaurantSlug, operatorName } = req.body;
     if (!restaurantSlug) {
-      return res.status(400).json({ success: false, error: 'restaurantSlug é obrigatório.' });
+      return res.status(400).json({ success: false, error: 'restaurantSlug Ã© obrigatÃ³rio.' });
     }
     if (!canAccessRestaurant(req, restaurantSlug)) {
-      return res.status(403).json({ success: false, error: 'Seu usuário não tem acesso a este restaurante.' });
+      return res.status(403).json({ success: false, error: 'Seu usuÃ¡rio nÃ£o tem acesso a este restaurante.' });
     }
     const affected = requestTableBillTransactional({
       tableNumber: Number(req.params.tableNumber),
@@ -1753,16 +1848,16 @@ app.post('/api/tables/:tableNumber/request-bill', authenticateStaff, requirePerm
   }
 });
 
-// 5c-ter. V9 ULTRA-CORREÇÃO: "REABRIR CONTA" — desfaz o FECHAMENTO
-// temporário (não o pagamento). Mesa volta para EM USO e aceita novos itens.
+// 5c-ter. V9 ULTRA-CORREÃ‡ÃƒO: "REABRIR CONTA" â€” desfaz o FECHAMENTO
+// temporÃ¡rio (nÃ£o o pagamento). Mesa volta para EM USO e aceita novos itens.
 app.post('/api/tables/:tableNumber/reopen', authenticateStaff, requirePermission('can_change_status'), (req, res) => {
   try {
     const { restaurantSlug, operatorName } = req.body;
     if (!restaurantSlug) {
-      return res.status(400).json({ success: false, error: 'restaurantSlug é obrigatório.' });
+      return res.status(400).json({ success: false, error: 'restaurantSlug Ã© obrigatÃ³rio.' });
     }
     if (!canAccessRestaurant(req, restaurantSlug)) {
-      return res.status(403).json({ success: false, error: 'Seu usuário não tem acesso a este restaurante.' });
+      return res.status(403).json({ success: false, error: 'Seu usuÃ¡rio nÃ£o tem acesso a este restaurante.' });
     }
     const affected = reopenTableOrderTransactional({
       tableNumber: Number(req.params.tableNumber),
@@ -1785,9 +1880,9 @@ app.post('/api/tables/:tableNumber/reopen', authenticateStaff, requirePermission
   }
 });
 
-// 5d. Close Table Order & Free Table (Fechamento de Conta do Garçom / Salão)
-// V9.2 — Caixa é obrigatório para operações financeiras de mesa.
-// Lê o turno de caixa e a configuração diretamente do estado do servidor (não confia no cliente).
+// 5d. Close Table Order & Free Table (Fechamento de Conta do GarÃ§om / SalÃ£o)
+// V9.2 â€” Caixa Ã© obrigatÃ³rio para operaÃ§Ãµes financeiras de mesa.
+// LÃª o turno de caixa e a configuraÃ§Ã£o diretamente do estado do servidor (nÃ£o confia no cliente).
 function cashRequiredForTablesError(): string | null {
   const settings: any = getDoc('systemSettings')?.value;
   if (settings && settings.requireCashForTables === false) return null; // administrador desligou a regra
@@ -1796,8 +1891,8 @@ function cashRequiredForTablesError(): string | null {
   return null;
 }
 
-// V9 PLUS ULTRA 01: PAGAMENTO só para Caixa/Administrador autorizado — garçom é recusado no servidor,
-// mesmo chamando a rota direto (o garçom só faz FECHAMENTO via /request-bill).
+// V9 PLUS ULTRA 01: PAGAMENTO sÃ³ para Caixa/Administrador autorizado â€” garÃ§om Ã© recusado no servidor,
+// mesmo chamando a rota direto (o garÃ§om sÃ³ faz FECHAMENTO via /request-bill).
 app.post('/api/orders/:id/close-table', authenticateStaff, requirePermission('can_change_status'), requirePaymentAuthority, (req, res) => {
   try {
     const cashError = cashRequiredForTablesError();
@@ -1816,15 +1911,15 @@ app.post('/api/orders/:id/close-table', authenticateStaff, requirePermission('ca
     } = req.body;
 
     if (!paymentMethod) {
-      return res.status(400).json({ success: false, error: 'Forma de pagamento é obrigatória para fechar a conta' });
+      return res.status(400).json({ success: false, error: 'Forma de pagamento Ã© obrigatÃ³ria para fechar a conta' });
     }
 
     // Isolamento multi-restaurante (item 9): impede que um operador feche
-    // uma comanda de outro restaurante, mesmo conhecendo o orderId — a
-    // mesma checagem já usada em GET /api/orders/:id e POST /api/orders.
+    // uma comanda de outro restaurante, mesmo conhecendo o orderId â€” a
+    // mesma checagem jÃ¡ usada em GET /api/orders/:id e POST /api/orders.
     const existingOrder = getOrderById(req.params.id);
     if (!existingOrder || !canAccessRestaurant(req, existingOrder.restaurantSlug)) {
-      return res.status(404).json({ success: false, error: 'Pedido não encontrado' });
+      return res.status(404).json({ success: false, error: 'Pedido nÃ£o encontrado' });
     }
 
     const closed = closeTableOrderTransactional({
@@ -1832,14 +1927,14 @@ app.post('/api/orders/:id/close-table', authenticateStaff, requirePermission('ca
       tableNumber: Number(tableNumber),
       paymentMethod,
       discount: Number(discount) || 0,
-      // undefined = padrão do sistema (10% incluída); 0 = desativada pelo operador
+      // undefined = padrÃ£o do sistema (10% incluÃ­da); 0 = desativada pelo operador
       serviceFee: serviceFee === undefined || serviceFee === null ? undefined : Number(serviceFee) || 0,
       total: total !== undefined ? Number(total) : undefined,
       splitCount: Number(splitCount) || 1,
       operatorName,
       waiterNotes,
-      // V8: Nota Fiscal (NFC-e, emitida depois no módulo Fiscal) ou Cupom
-      // Comum (recibo não fiscal). Default 'comum' quando não informado.
+      // V8: Nota Fiscal (NFC-e, emitida depois no mÃ³dulo Fiscal) ou Cupom
+      // Comum (recibo nÃ£o fiscal). Default 'comum' quando nÃ£o informado.
       receiptType: receiptType === 'fiscal' ? 'fiscal' : 'comum',
     });
 
@@ -1873,7 +1968,7 @@ app.post('/api/orders/:id/close-table', authenticateStaff, requirePermission('ca
 app.post('/api/orders/:id/conference', authenticateStaff, requirePermission('can_view_orders'), (req, res) => {
   try {
     const order = getOrderById(req.params.id);
-    if (!order) return res.status(404).json({ success: false, error: 'Pedido não encontrado.' });
+    if (!order) return res.status(404).json({ success: false, error: 'Pedido nÃ£o encontrado.' });
     const conference = {
       type: 'CONFERENCIA_NAO_FISCAL',
       orderId: order.id,
@@ -1921,12 +2016,12 @@ app.patch('/api/orders/:id/items/:itemId', authenticateStaff, requirePermission(
   }
 });
 
-// V9.2 — EXCLUIR ITEM (somente a quantidade selecionada; nunca o pedido inteiro)
+// V9.2 â€” EXCLUIR ITEM (somente a quantidade selecionada; nunca o pedido inteiro)
 app.delete('/api/orders/:id/items/:itemId', authenticateStaff, requirePermission('can_edit_orders'), (req, res) => {
   try {
     const { quantity, reason, confirmed } = req.body || {};
     if (confirmed !== true) {
-      return res.status(400).json({ success: false, error: 'Confirmação obrigatória para excluir item.' });
+      return res.status(400).json({ success: false, error: 'ConfirmaÃ§Ã£o obrigatÃ³ria para excluir item.' });
     }
     const result = removeOrderItemQuantityTransactional({
       orderId: req.params.id,
@@ -1947,7 +2042,7 @@ app.patch('/api/orders/:id/table', authenticateStaff, requirePermission('can_edi
   try {
     const { tableNumber } = req.body as { tableNumber: number };
     if (!tableNumber || typeof tableNumber !== 'number') {
-      return res.status(400).json({ success: false, error: 'Número da mesa válido é obrigatório' });
+      return res.status(400).json({ success: false, error: 'NÃºmero da mesa vÃ¡lido Ã© obrigatÃ³rio' });
     }
     const updated = updateOrderTableTransactional(req.params.id, tableNumber);
     broadcastOrdersUpdate('table_transferred', updated);
@@ -1964,7 +2059,7 @@ app.delete('/api/orders/:id', authenticateStaff, requireRole('super_admin'), (re
     const operatorName = (req.query.operatorName as string) || req.userSession?.name || 'Administrador';
     const deleted = deleteOrderTransactional(req.params.id);
     if (!deleted) {
-      return res.status(404).json({ success: false, error: 'Pedido não encontrado' });
+      return res.status(404).json({ success: false, error: 'Pedido nÃ£o encontrado' });
     }
 
     broadcastOrdersUpdate('order_deleted', { id: req.params.id });
@@ -1976,7 +2071,7 @@ app.delete('/api/orders/:id', authenticateStaff, requireRole('super_admin'), (re
       category: 'order',
     });
 
-    res.json({ success: true, message: 'Pedido excluído com sucesso' });
+    res.json({ success: true, message: 'Pedido excluÃ­do com sucesso' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1993,7 +2088,7 @@ app.post('/api/orders/clear-history', authenticateStaff, requireRole('super_admi
     logAuditAction({
       userName: operatorName || req.userSession?.name || 'Administrador',
       userRole: 'super_admin',
-      action: `Limpou histórico de pedidos (${removedCount} pedidos removidos - modo: ${mode || 'finished'})`,
+      action: `Limpou histÃ³rico de pedidos (${removedCount} pedidos removidos - modo: ${mode || 'finished'})`,
       category: 'order',
     });
 
@@ -2014,7 +2109,7 @@ app.post('/api/orders/master-reset', authenticateStaff, requireRole('super_admin
     if (confirmation !== 'RESETAR PEDIDOS') {
       return res.status(400).json({
         success: false,
-        error: 'Confirmação inválida. Digite exatamente "RESETAR PEDIDOS" em maiúsculas.',
+        error: 'ConfirmaÃ§Ã£o invÃ¡lida. Digite exatamente "RESETAR PEDIDOS" em maiÃºsculas.',
       });
     }
 
@@ -2026,8 +2121,8 @@ app.post('/api/orders/master-reset', authenticateStaff, requireRole('super_admin
     logAuditAction({
       userName: opName,
       userRole: 'super_admin',
-      action: `[RESET MESTRE] Apagou permanentemente ${result.count} pedidos e histórico`,
-      details: `Restaurantes afetados: ${result.affectedRestaurants.join(', ') || 'Nenhum'}. Clientes e cardápio preservados.`,
+      action: `[RESET MESTRE] Apagou permanentemente ${result.count} pedidos e histÃ³rico`,
+      details: `Restaurantes afetados: ${result.affectedRestaurants.join(', ') || 'Nenhum'}. Clientes e cardÃ¡pio preservados.`,
       category: 'order',
     });
 
@@ -2051,24 +2146,24 @@ app.post('/api/orders/batch', publicWriteLimiter, optionalStaffAuth, (req, res) 
     const { ordersPayloads } = req.body as { ordersPayloads: any[] };
 
     if (!Array.isArray(ordersPayloads) || ordersPayloads.length === 0) {
-      return res.status(400).json({ success: false, error: 'Lista de pedidos para processamento é obrigatória.' });
+      return res.status(400).json({ success: false, error: 'Lista de pedidos para processamento Ã© obrigatÃ³ria.' });
     }
 
     if (ordersPayloads.length > 10) {
-      return res.status(400).json({ success: false, error: 'Máximo de 10 pedidos por lote.' });
+      return res.status(400).json({ success: false, error: 'MÃ¡ximo de 10 pedidos por lote.' });
     }
     const isStaffBatch = Boolean(req.userSession);
     const createdOrders = [];
     for (const payload of ordersPayloads) {
       const slug = String(payload?.restaurantSlug || '');
       if (isStaffBatch && !canAccessRestaurant(req, slug)) {
-        return res.status(403).json({ success: false, error: 'Seu usuário não tem acesso a um dos restaurantes do lote.' });
+        return res.status(403).json({ success: false, error: 'Seu usuÃ¡rio nÃ£o tem acesso a um dos restaurantes do lote.' });
       }
       if (!isStaffBatch) {
         if (String(payload?.orderType || '').toLowerCase().includes('mesa')) {
           const tableNumber = Number(payload?.tableNumber);
           if (!verifyTableAccessToken(payload?.tableAccessToken, slug, tableNumber)) {
-            return res.status(403).json({ success: false, error: 'Senha/QR desta mesa inválido ou expirado. Peça uma nova senha à equipe.' });
+            return res.status(403).json({ success: false, error: 'Senha/QR desta mesa invÃ¡lido ou expirado. PeÃ§a uma nova senha Ã  equipe.' });
           }
         }
         delete payload.customerId;
@@ -2076,6 +2171,9 @@ app.post('/api/orders/batch', publicWriteLimiter, optionalStaffAuth, (req, res) 
       const result = createOrderTransactional(payload, { isStaff: isStaffBatch });
       createdOrders.push(result.order);
       broadcastOrdersUpdate('order_created', result.order);
+      if (!isStaff && ['delivery', 'retirada', 'online'].includes(result.order.orderType)) {
+        queueOnlineOrder(result.order);
+      }
       syncOrderToSupabase(result.order).catch(() => {});
     }
 
@@ -2113,7 +2211,7 @@ app.post('/api/auth/reset-password', resetLimiter, (req, res) => {
   try {
     const { token, newPassword } = req.body as { token: string; newPassword: string };
     if (!token || !newPassword) {
-      return res.status(400).json({ success: false, error: 'Código de validação e nova senha são obrigatórios.' });
+      return res.status(400).json({ success: false, error: 'CÃ³digo de validaÃ§Ã£o e nova senha sÃ£o obrigatÃ³rios.' });
     }
 
     const result = confirmPasswordReset(token, newPassword, req.body?.identifier);
@@ -2130,25 +2228,25 @@ app.post('/api/auth/reset-password', resetLimiter, (req, res) => {
 // AUTHENTICATION & SESSIONS API
 // ==========================================
 
-// Recuperação administrativa: usa exclusivamente ADMIN_PASSWORD configurada
-// no ambiente. Não existe senha fixa, senha mestre ou bypass público.
+// RecuperaÃ§Ã£o administrativa: usa exclusivamente ADMIN_PASSWORD configurada
+// no ambiente. NÃ£o existe senha fixa, senha mestre ou bypass pÃºblico.
 app.post('/api/auth/admin-reset', resetLimiter, (req, res) => {
   try {
     const configured = process.env.ADMIN_PASSWORD?.trim();
     if (!configured || configured.length < 8) {
       return res.status(503).json({
         success: false,
-        error: 'Recuperação administrativa indisponível: configure ADMIN_PASSWORD com pelo menos 8 caracteres no ambiente.',
+        error: 'RecuperaÃ§Ã£o administrativa indisponÃ­vel: configure ADMIN_PASSWORD com pelo menos 8 caracteres no ambiente.',
       });
     }
 
     const admin = findUserByUsername('admin');
     if (!admin) {
-      return res.status(404).json({ success: false, error: 'Usuário admin não encontrado.' });
+      return res.status(404).json({ success: false, error: 'UsuÃ¡rio admin nÃ£o encontrado.' });
     }
 
     if (!verifyPassword(configured, admin.passwordHash, admin.passwordSalt)) {
-      const updated = updateUser(admin.id, { newPassword: configured, operatorName: 'Recuperação administrativa' });
+      const updated = updateUser(admin.id, { newPassword: configured, operatorName: 'RecuperaÃ§Ã£o administrativa' });
       revokeAllSessionsForUser(admin.id);
       logAuditAction({
         userName: 'Sistema',
@@ -2156,14 +2254,14 @@ app.post('/api/auth/admin-reset', resetLimiter, (req, res) => {
         action: 'Senha do super administrador redefinida por ADMIN_PASSWORD',
         category: 'user',
       });
-      return res.json({ success: true, message: 'Senha do administrador redefinida. Todas as sessões anteriores foram encerradas.', user: updated });
+      return res.json({ success: true, message: 'Senha do administrador redefinida. Todas as sessÃµes anteriores foram encerradas.', user: updated });
     }
 
     revokeAllSessionsForUser(admin.id);
-    return res.json({ success: true, message: 'Senha do administrador já corresponde a ADMIN_PASSWORD. Sessões anteriores foram encerradas.' });
+    return res.json({ success: true, message: 'Senha do administrador jÃ¡ corresponde a ADMIN_PASSWORD. SessÃµes anteriores foram encerradas.' });
   } catch (error: any) {
     console.error('[ADMIN RESET ERROR]:', error);
-    return res.status(500).json({ success: false, error: 'Não foi possível redefinir a senha do administrador.' });
+    return res.status(500).json({ success: false, error: 'NÃ£o foi possÃ­vel redefinir a senha do administrador.' });
   }
 });
 
@@ -2171,7 +2269,7 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
-      return res.status(400).json({ success: false, error: 'Login e senha são obrigatórios.' });
+      return res.status(400).json({ success: false, error: 'Login e senha sÃ£o obrigatÃ³rios.' });
     }
 
     const lockKey = `${String(username).toLowerCase().trim()}|${getClientIp(req)}`;
@@ -2186,10 +2284,10 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
     }
 
     const user = findUserByUsername(username);
-    // Mesma resposta para usuário inexistente, inativo ou senha errada (sem enumeração de contas)
+    // Mesma resposta para usuÃ¡rio inexistente, inativo ou senha errada (sem enumeraÃ§Ã£o de contas)
     const invalid = () => {
       registerLoginFailure(lockKey);
-      return res.status(401).json({ success: false, error: 'Login ou senha inválidos.' });
+      return res.status(401).json({ success: false, error: 'Login ou senha invÃ¡lidos.' });
     };
     if (!user || !user.isActive) {
       return invalid();
@@ -2217,11 +2315,11 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
     res.json({ success: true, user: safeUser, token: sessionToken });
   } catch (error: any) {
     console.error('[AUTH ERROR]:', error);
-    res.status(500).json({ success: false, error: 'Erro ao autenticar usuário.' });
+    res.status(500).json({ success: false, error: 'Erro ao autenticar usuÃ¡rio.' });
   }
 });
 
-// Valida a sessão atual (usado pelo painel ao recarregar a página)
+// Valida a sessÃ£o atual (usado pelo painel ao recarregar a pÃ¡gina)
 app.get('/api/auth/me', authenticateStaff, (req, res) => {
   const u = req.userSession!;
   res.json({ success: true, user: u });
@@ -2234,7 +2332,7 @@ app.post('/api/auth/staff-logout', (req, res) => {
     if (authHeader) {
       revokeUserSession(authHeader.replace('Bearer ', '').trim());
     }
-    res.json({ success: true, message: 'Sessão de colaborador encerrada com sucesso.' });
+    res.json({ success: true, message: 'SessÃ£o de colaborador encerrada com sucesso.' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2257,7 +2355,7 @@ app.post('/api/users', authenticateStaff, requireRole('super_admin'), (req, res)
   try {
     const { name, username, password, role, restaurantSlug, restaurantAccess, customPermissions, operatorName } = req.body;
     if (!name || !username || !password || !role) {
-      return res.status(400).json({ success: false, error: 'Nome, login, senha e função são obrigatórios.' });
+      return res.status(400).json({ success: false, error: 'Nome, login, senha e funÃ§Ã£o sÃ£o obrigatÃ³rios.' });
     }
 
     const newUser = createUser({
@@ -2265,10 +2363,10 @@ app.post('/api/users', authenticateStaff, requireRole('super_admin'), (req, res)
       username,
       password,
       role,
-      // BUG CORRIGIDO: o formulário de "Cadastrar Novo Usuário" envia o
-      // campo "restaurantAccess" (mesmo nome usado na edição/PATCH), mas
-      // aqui só se lia "restaurantSlug" — undefined sempre, então todo
-      // usuário novo era criado com acesso "all" em vez do restaurante
+      // BUG CORRIGIDO: o formulÃ¡rio de "Cadastrar Novo UsuÃ¡rio" envia o
+      // campo "restaurantAccess" (mesmo nome usado na ediÃ§Ã£o/PATCH), mas
+      // aqui sÃ³ se lia "restaurantSlug" â€” undefined sempre, entÃ£o todo
+      // usuÃ¡rio novo era criado com acesso "all" em vez do restaurante
       // escolhido no cadastro.
       restaurantSlug: restaurantSlug || restaurantAccess,
       customPermissions,
@@ -2293,7 +2391,7 @@ app.put('/api/users/:id', authenticateStaff, requireRole('super_admin'), (req, r
       newPassword: newPassword || password,
       operatorName: operatorName || req.userSession?.name,
     });
-    // Troca de senha, desativação ou mudança de função encerram as sessões abertas desse usuário
+    // Troca de senha, desativaÃ§Ã£o ou mudanÃ§a de funÃ§Ã£o encerram as sessÃµes abertas desse usuÃ¡rio
     if (newPassword || password || isActive === false || role) {
       revokeAllSessionsForUser(req.params.id);
     }
@@ -2315,7 +2413,7 @@ app.patch('/api/users/:id', authenticateStaff, requireRole('super_admin'), (req,
       newPassword: newPassword || password,
       operatorName: operatorName || req.userSession?.name,
     });
-    // Troca de senha, desativação ou mudança de função encerram as sessões abertas desse usuário
+    // Troca de senha, desativaÃ§Ã£o ou mudanÃ§a de funÃ§Ã£o encerram as sessÃµes abertas desse usuÃ¡rio
     if (newPassword || password || isActive === false || role) {
       revokeAllSessionsForUser(req.params.id);
     }
@@ -2331,9 +2429,9 @@ app.delete('/api/users/:id', authenticateStaff, requireRole('super_admin'), (req
     const deleted = deleteUser(req.params.id, operatorName);
     if (deleted) revokeAllSessionsForUser(req.params.id);
     if (!deleted) {
-      return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+      return res.status(404).json({ success: false, error: 'UsuÃ¡rio nÃ£o encontrado.' });
     }
-    res.json({ success: true, message: 'Usuário excluído com sucesso.' });
+    res.json({ success: true, message: 'UsuÃ¡rio excluÃ­do com sucesso.' });
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message });
   }
@@ -2343,8 +2441,8 @@ app.delete('/api/users/:id', authenticateStaff, requireRole('super_admin'), (req
 // CONNECTED DEVICES (MOBILE RECEIVERS) API
 // ==========================================
 
-// V9 PLUS ULTRA 01: multi-restaurante — um administrador só enxerga/altera aparelhos do PRÓPRIO
-// restaurante (aparelhos ainda sem restaurante vinculado ficam visíveis para poderem ser vinculados).
+// V9 PLUS ULTRA 01: multi-restaurante â€” um administrador sÃ³ enxerga/altera aparelhos do PRÃ“PRIO
+// restaurante (aparelhos ainda sem restaurante vinculado ficam visÃ­veis para poderem ser vinculados).
 function deviceInScope(req: any, dev: { restaurantSlug?: string } | undefined): boolean {
   if (!dev) return false;
   if (!dev.restaurantSlug) return true;
@@ -2373,7 +2471,7 @@ app.post('/api/devices/pair', authLimiter, (req, res) => {
   try {
     const { pairingCode, deviceName, platform, soundType, volume } = req.body;
     if (!pairingCode) {
-      return res.status(400).json({ success: false, error: 'Código de pareamento é obrigatório.' });
+      return res.status(400).json({ success: false, error: 'CÃ³digo de pareamento Ã© obrigatÃ³rio.' });
     }
 
     const device = registerOrPairDevice({
@@ -2394,7 +2492,7 @@ app.post('/api/devices/ping', rateLimit({ key: 'dev-ping', max: 120, windowMs: 6
   try {
     const { idOrCode } = req.body;
     if (!idOrCode) {
-      return res.status(400).json({ success: false, error: 'Identificador do dispositivo é obrigatório.' });
+      return res.status(400).json({ success: false, error: 'Identificador do dispositivo Ã© obrigatÃ³rio.' });
     }
     const dev = updateDevicePing(idOrCode);
     if (dev?.revoked) return res.status(403).json({ success: false, code: 'DEVICE_REVOKED', error: 'Dispositivo revogado.' });
@@ -2404,7 +2502,7 @@ app.post('/api/devices/ping', rateLimit({ key: 'dev-ping', max: 120, windowMs: 6
   }
 });
 
-// ---- V9.2: conexão por QR Code (token temporário, uso único, aprovação do admin) ----
+// ---- V9.2: conexÃ£o por QR Code (token temporÃ¡rio, uso Ãºnico, aprovaÃ§Ã£o do admin) ----
 app.post('/api/devices/qr/create', authenticateStaff, requireRole('super_admin', 'administrador'), (req, res) => {
   try {
     const slug = typeof req.body?.restaurantSlug === 'string' ? req.body.restaurantSlug : undefined;
@@ -2418,16 +2516,16 @@ app.post('/api/devices/qr/create', authenticateStaff, requireRole('super_admin',
   }
 });
 
-// Celular (já logado como equipe) apresenta o token lido do QR e pede autorização.
+// Celular (jÃ¡ logado como equipe) apresenta o token lido do QR e pede autorizaÃ§Ã£o.
 app.post('/api/devices/qr/claim', authenticateStaff, authLimiter, (req, res) => {
   try {
     const { token, deviceName, platform, deviceType } = req.body || {};
     if (typeof token !== 'string' || token.length < 20) {
-      return res.status(400).json({ success: false, error: 'Token inválido.' });
+      return res.status(400).json({ success: false, error: 'Token invÃ¡lido.' });
     }
     const out = claimQrToken({
       token, deviceName: String(deviceName || ''), platform, deviceType,
-      requestedBy: req.userSession?.name || 'Usuário',
+      requestedBy: req.userSession?.name || 'UsuÃ¡rio',
     });
     res.json({ success: true, ...out });
   } catch (error: any) {
@@ -2474,13 +2572,13 @@ app.post('/api/devices/:id/revoke', authenticateStaff, requireRole('super_admin'
 app.patch('/api/devices/:id', authenticateStaff, requireRole('super_admin', 'administrador'), (req, res) => {
   try {
     const target = getDeviceById(req.params.id);
-    if (!target) return res.status(404).json({ success: false, error: 'Dispositivo não encontrado.' });
+    if (!target) return res.status(404).json({ success: false, error: 'Dispositivo nÃ£o encontrado.' });
     if (!deviceInScope(req, target)) {
       return res.status(403).json({ success: false, error: 'Dispositivo de outro restaurante.' });
     }
     const operator = req.userSession?.name || 'Administrador';
 
-    // V9 PLUS ULTRA 01: vínculo com restaurante (validado) e função ÚNICA do aparelho.
+    // V9 PLUS ULTRA 01: vÃ­nculo com restaurante (validado) e funÃ§Ã£o ÃšNICA do aparelho.
     if (req.body && req.body.restaurantSlug !== undefined) {
       const slug = String(req.body.restaurantSlug || '');
       if (!restaurantExists(slug)) return res.status(400).json({ success: false, error: 'Restaurante inexistente.' });
@@ -2490,7 +2588,7 @@ app.patch('/api/devices/:id', authenticateStaff, requireRole('super_admin', 'adm
       setDeviceRestaurant(req.params.id, slug, operator);
     }
     if (req.body && req.body.screenRole !== undefined) {
-      // Só um valor (string) ou null. Array/objeto = tentativa de multi-função -> recusado.
+      // SÃ³ um valor (string) ou null. Array/objeto = tentativa de multi-funÃ§Ã£o -> recusado.
       setDeviceScreenRole(req.params.id, req.body.screenRole, operator);
     }
 
@@ -2514,7 +2612,7 @@ app.delete('/api/devices/:id', authenticateStaff, requireRole('super_admin', 'ad
     const operatorName = (req.query.operatorName as string) || req.userSession?.name || 'Administrador';
     const disconnected = disconnectDevice(req.params.id, operatorName);
     if (!disconnected) {
-      return res.status(404).json({ success: false, error: 'Dispositivo não encontrado.' });
+      return res.status(404).json({ success: false, error: 'Dispositivo nÃ£o encontrado.' });
     }
     res.json({ success: true, message: 'Dispositivo desconectado com sucesso.' });
   } catch (error: any) {
@@ -2540,7 +2638,7 @@ app.post('/api/audit-logs', authenticateStaff, (req, res) => {
   try {
     const { action, details, category } = req.body;
     if (!action) {
-      return res.status(400).json({ success: false, error: 'Ação é obrigatória.' });
+      return res.status(400).json({ success: false, error: 'AÃ§Ã£o Ã© obrigatÃ³ria.' });
     }
     logAuditAction({
       userName: req.userSession!.name,
@@ -2556,10 +2654,10 @@ app.post('/api/audit-logs', authenticateStaff, (req, res) => {
 });
 
 // ==========================================
-// CATÁLOGO (cardápio, restaurantes, categorias) — fonte única no servidor
+// CATÃLOGO (cardÃ¡pio, restaurantes, categorias) â€” fonte Ãºnica no servidor
 // ==========================================
 
-// Público: só o que o cliente precisa ver (sem custos, ficha técnica ou dados fiscais)
+// PÃºblico: sÃ³ o que o cliente precisa ver (sem custos, ficha tÃ©cnica ou dados fiscais)
 app.get('/api/public/catalog', (req, res) => {
   const etag = getCatalogEtag();
   res.setHeader('ETag', etag);
@@ -2570,7 +2668,7 @@ app.get('/api/public/catalog', (req, res) => {
   res.json({ success: true, ...getPublicCatalog() });
 });
 
-// Painel: catálogo completo
+// Painel: catÃ¡logo completo
 app.get('/api/catalog', authenticateStaff, (req, res) => {
   const etag = `${getCatalogEtag()}-${req.userSession!.permissions?.can_view_menu ? 'f' : 'p'}`;
   res.setHeader('ETag', etag);
@@ -2578,14 +2676,14 @@ app.get('/api/catalog', authenticateStaff, (req, res) => {
   if (req.headers['if-none-match'] === etag) {
     return res.status(304).end();
   }
-  // Perfis sem permissão de ver o cardápio interno (ex.: entregador) recebem só a versão pública
+  // Perfis sem permissÃ£o de ver o cardÃ¡pio interno (ex.: entregador) recebem sÃ³ a versÃ£o pÃºblica
   if (req.userSession!.role !== 'super_admin' && !req.userSession!.permissions?.can_view_menu) {
     return res.json({ success: true, ...getPublicCatalog() });
   }
   const c = getCatalog();
   const scope = resolveScopedSlug(req);
   if (scope) {
-    // Colaborador vinculado a um restaurante só recebe o próprio
+    // Colaborador vinculado a um restaurante sÃ³ recebe o prÃ³prio
     return res.json({
       success: true,
       version: c.version,
@@ -2605,7 +2703,7 @@ app.put('/api/catalog', authenticateStaff, requireRole('super_admin', 'administr
     let input = body;
 
     if (scope) {
-      // Usuário de um restaurante só altera o próprio: mescla com o restante já salvo
+      // UsuÃ¡rio de um restaurante sÃ³ altera o prÃ³prio: mescla com o restante jÃ¡ salvo
       const cur = getCatalog();
       input = {
         restaurants: { ...cur.restaurants, ...(body.restaurants?.[scope] ? { [scope]: body.restaurants[scope] } : {}) },
@@ -2620,7 +2718,7 @@ app.put('/api/catalog', authenticateStaff, requireRole('super_admin', 'administr
         coupons: cur.coupons,
       };
     } else if (req.userSession!.role !== 'super_admin') {
-      // Administrador (não-super) não altera cupons
+      // Administrador (nÃ£o-super) nÃ£o altera cupons
       input = { ...body, coupons: getCatalog().coupons };
     }
 
@@ -2631,18 +2729,18 @@ app.put('/api/catalog', authenticateStaff, requireRole('super_admin', 'administr
     logAuditAction({
       userName: req.userSession!.name,
       userRole: req.userSession!.role,
-      action: `Catálogo atualizado (versão ${result.version})`,
+      action: `CatÃ¡logo atualizado (versÃ£o ${result.version})`,
       category: 'system',
     });
     res.json(result);
   } catch (error: any) {
     console.error('[CATALOG ERROR]:', error);
-    res.status(500).json({ success: false, error: 'Falha ao salvar o catálogo.' });
+    res.status(500).json({ success: false, error: 'Falha ao salvar o catÃ¡logo.' });
   }
 });
 
 // ==========================================
-// ESTADO OPERACIONAL COMPARTILHADO (caixa, mesas, entregadores, CRM, configurações)
+// ESTADO OPERACIONAL COMPARTILHADO (caixa, mesas, entregadores, CRM, configuraÃ§Ãµes)
 // ==========================================
 function broadcastStateUpdate(key: string, version: number) {
   const payload = JSON.stringify({ event: 'state_updated', key, version, timestamp: new Date().toISOString() });
@@ -2655,7 +2753,7 @@ function broadcastStateUpdate(key: string, version: number) {
   });
 }
 
-// Versões de todos os documentos que o usuário pode ler (barato: usado no polling de fallback)
+// VersÃµes de todos os documentos que o usuÃ¡rio pode ler (barato: usado no polling de fallback)
 app.get('/api/state', authenticateStaff, (req, res) => {
   const role = req.userSession!.role;
   const versions: Record<string, number> = {};
@@ -2667,7 +2765,7 @@ app.get('/api/state/:key', authenticateStaff, (req, res) => {
   const { key } = req.params;
   if (!isKnownKey(key)) return res.status(404).json({ success: false, error: 'Documento desconhecido.' });
   if (!canAccess(req.userSession!.role, key, 'read')) {
-    return res.status(403).json({ success: false, error: 'Sem permissão para este documento.' });
+    return res.status(403).json({ success: false, error: 'Sem permissÃ£o para este documento.' });
   }
   const doc = getDoc(key);
   res.json({ success: true, key, exists: Boolean(doc), version: doc?.version ?? 0, value: doc?.value ?? null, updatedAt: doc?.updatedAt, updatedBy: doc?.updatedBy });
@@ -2677,11 +2775,11 @@ app.put('/api/state/:key', authenticateStaff, (req, res) => {
   const { key } = req.params;
   if (!isKnownKey(key)) return res.status(404).json({ success: false, error: 'Documento desconhecido.' });
   if (!canAccess(req.userSession!.role, key, 'write')) {
-    return res.status(403).json({ success: false, error: 'Sem permissão para alterar este documento.' });
+    return res.status(403).json({ success: false, error: 'Sem permissÃ£o para alterar este documento.' });
   }
   const { value, baseVersion } = req.body || {};
   if (typeof baseVersion !== 'number' || !Number.isInteger(baseVersion) || baseVersion < 0) {
-    return res.status(400).json({ success: false, error: 'baseVersion (inteiro) é obrigatório.' });
+    return res.status(400).json({ success: false, error: 'baseVersion (inteiro) Ã© obrigatÃ³rio.' });
   }
   const result: any = saveDoc(key, value, baseVersion, req.userSession!.name);
   if (result.ok) {
@@ -2701,73 +2799,73 @@ app.put('/api/state/:key', authenticateStaff, (req, res) => {
 });
 
 // ==========================================
-// DIAGNÓSTICO REAL DE SEGURANÇA/CONFIGURAÇÃO (substitui checagens fixas "OK")
+// DIAGNÃ“STICO REAL DE SEGURANÃ‡A/CONFIGURAÃ‡ÃƒO (substitui checagens fixas "OK")
 // ==========================================
 app.get('/api/admin/system-audit', ...adminOnly, (req, res) => {
   type Check = { id: string; label: string; status: 'ok' | 'warn' | 'fail'; detail: string };
   const checks: Check[] = [];
   const add = (id: string, label: string, status: Check['status'], detail: string) => checks.push({ id, label, status, detail });
 
-  add('production', 'Modo de execução', IS_PRODUCTION ? 'ok' : 'warn', IS_PRODUCTION ? 'NODE_ENV=production' : 'Executando em modo de desenvolvimento.');
+  add('production', 'Modo de execuÃ§Ã£o', IS_PRODUCTION ? 'ok' : 'warn', IS_PRODUCTION ? 'NODE_ENV=production' : 'Executando em modo de desenvolvimento.');
 
   const defaults = listUsersWithDefaultPassword();
-  add('default-passwords', 'Contas com senha padrão', defaults.length === 0 ? 'ok' : 'fail',
-    defaults.length === 0 ? 'Nenhuma conta ativa usa senha padrão conhecida.' : `Troque a senha de: ${defaults.join(', ')}.`);
+  add('default-passwords', 'Contas com senha padrÃ£o', defaults.length === 0 ? 'ok' : 'fail',
+    defaults.length === 0 ? 'Nenhuma conta ativa usa senha padrÃ£o conhecida.' : `Troque a senha de: ${defaults.join(', ')}.`);
 
   add('admin-password', 'ADMIN_PASSWORD definida', process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.length >= 8 ? 'ok' : 'warn',
     process.env.ADMIN_PASSWORD ? 'Definida no ambiente.' : 'Ausente: a senha inicial do admin foi gerada/definida no primeiro boot.');
 
   const cors = (process.env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
-  add('cors', 'CORS restrito', 'ok', cors.length ? `Origens permitidas: ${cors.join(', ')}` : 'Somente mesma origem (recomendado quando cardápio e painel usam o mesmo domínio).');
+  add('cors', 'CORS restrito', 'ok', cors.length ? `Origens permitidas: ${cors.join(', ')}` : 'Somente mesma origem (recomendado quando cardÃ¡pio e painel usam o mesmo domÃ­nio).');
 
-  add('public-orders', 'Listagem de pedidos protegida', 'ok', 'GET /api/orders, stream e alterações exigem login de colaborador.');
-  add('server-pricing', 'Preço validado no servidor', 'ok', 'Pedidos são recalculados a partir do catálogo do servidor.');
+  add('public-orders', 'Listagem de pedidos protegida', 'ok', 'GET /api/orders, stream e alteraÃ§Ãµes exigem login de colaborador.');
+  add('server-pricing', 'PreÃ§o validado no servidor', 'ok', 'Pedidos sÃ£o recalculados a partir do catÃ¡logo do servidor.');
 
   {
     const slugs = Object.keys(getCatalog().restaurants);
     const withCert = slugs.filter((s) => { try { return getFiscalConfig(s).cnpj; } catch { return false; } });
     if (!process.env.FISCAL_ENCRYPTION_KEY) {
-      add('fiscal', 'Emissão fiscal', 'warn', 'FISCAL_ENCRYPTION_KEY não definida: cofre de certificados indisponível. Configure a variável para habilitar o upload do certificado A1.');
+      add('fiscal', 'EmissÃ£o fiscal', 'warn', 'FISCAL_ENCRYPTION_KEY nÃ£o definida: cofre de certificados indisponÃ­vel. Configure a variÃ¡vel para habilitar o upload do certificado A1.');
     } else if (withCert.length === 0) {
-      add('fiscal', 'Emissão fiscal', 'warn', 'Módulo pronto; nenhum restaurante tem CNPJ/certificado cadastrado ainda (Ferramentas → Fiscal).');
+      add('fiscal', 'EmissÃ£o fiscal', 'warn', 'MÃ³dulo pronto; nenhum restaurante tem CNPJ/certificado cadastrado ainda (Ferramentas â†’ Fiscal).');
     } else {
-      add('fiscal', 'Emissão fiscal', 'ok', `${withCert.length} restaurante(s) com dados fiscais cadastrados.`);
+      add('fiscal', 'EmissÃ£o fiscal', 'ok', `${withCert.length} restaurante(s) com dados fiscais cadastrados.`);
     }
   }
-  add('print-agent-key', 'Chave do agente de impressão', process.env.PRINT_AGENT_KEY ? 'ok' : 'warn', process.env.PRINT_AGENT_KEY ? 'Configurada.' : 'Sem PRINT_AGENT_KEY: apenas usuários logados acessam a fila de impressão.');
+  add('print-agent-key', 'Chave do agente de impressÃ£o', process.env.PRINT_AGENT_KEY ? 'ok' : 'warn', process.env.PRINT_AGENT_KEY ? 'Configurada.' : 'Sem PRINT_AGENT_KEY: apenas usuÃ¡rios logados acessam a fila de impressÃ£o.');
   add('gemini', 'IA (Gemini)', process.env.GEMINI_API_KEY ? 'ok' : 'warn', process.env.GEMINI_API_KEY ? 'Chave configurada.' : 'Sem chave: recursos de IA usam respostas locais.');
-  add('cloudinary', 'Upload de imagens (Cloudinary)', isCloudinaryConfigured() ? 'ok' : 'warn', isCloudinaryConfigured() ? 'Configurado.' : 'Não configurado.');
-  add('supabase', 'Backup em Supabase', isSupabaseConfigured() ? 'ok' : 'warn', isSupabaseConfigured() ? 'Configurado (cópia de pedidos).' : 'Não configurado: dados só em arquivos locais do servidor.');
-  add('persistence', 'Persistência em disco', 'warn', `Dados em ${path.join(process.cwd(), 'data')}. Em hospedagens com disco efêmero (ex.: Render sem Persistent Disk) eles se perdem a cada deploy.`);
+  add('cloudinary', 'Upload de imagens (Cloudinary)', isCloudinaryConfigured() ? 'ok' : 'warn', isCloudinaryConfigured() ? 'Configurado.' : 'NÃ£o configurado.');
+  add('supabase', 'Backup em Supabase', isSupabaseConfigured() ? 'ok' : 'warn', isSupabaseConfigured() ? 'Configurado (cÃ³pia de pedidos).' : 'NÃ£o configurado: dados sÃ³ em arquivos locais do servidor.');
+  add('persistence', 'PersistÃªncia em disco', 'warn', `Dados em ${path.join(process.cwd(), 'data')}. Em hospedagens com disco efÃªmero (ex.: Render sem Persistent Disk) eles se perdem a cada deploy.`);
 
   const cat = getCatalog();
-  add('catalog', 'Catálogo no servidor', 'ok', `Versão ${cat.version}: ${Object.keys(cat.restaurants).length} restaurante(s), ${cat.menuItems.length} itens.`);
-  add('users', 'Usuários ativos', countActiveUsers() > 0 ? 'ok' : 'fail', `${countActiveUsers()} usuário(s) ativo(s).`);
+  add('catalog', 'CatÃ¡logo no servidor', 'ok', `VersÃ£o ${cat.version}: ${Object.keys(cat.restaurants).length} restaurante(s), ${cat.menuItems.length} itens.`);
+  add('users', 'UsuÃ¡rios ativos', countActiveUsers() > 0 ? 'ok' : 'fail', `${countActiveUsers()} usuÃ¡rio(s) ativo(s).`);
 
   res.json({ success: true, generatedAt: new Date().toISOString(), checks });
 });
 
 // ==========================================
-// FISCAL MODULE API (NFC-e, NF-e, CERTIFICADOS, CÁLCULO TRIBUTÁRIO)
+// FISCAL MODULE API (NFC-e, NF-e, CERTIFICADOS, CÃLCULO TRIBUTÃRIO)
 // ==========================================
-// V9.3: módulo fiscal REATIVADO. Fica PRONTO PARA EMITIR quando o restaurante tiver
-// certificado digital A1 (.pfx/.p12) instalado E CNPJ/UF/município configurados.
-// Sem isso, os endpoints funcionam normalmente mas a emissão real é recusada (ver documentService).
+// V9.3: mÃ³dulo fiscal REATIVADO. Fica PRONTO PARA EMITIR quando o restaurante tiver
+// certificado digital A1 (.pfx/.p12) instalado E CNPJ/UF/municÃ­pio configurados.
+// Sem isso, os endpoints funcionam normalmente mas a emissÃ£o real Ã© recusada (ver documentService).
 app.use('/api/fiscal', fiscalRouter);
 
-// Áreas internas (equipe) são servidas por um aplicativo SEPARADO (painel.html).
-// Tudo o mais é o cardápio do cliente (index.html). Comparação por 1º segmento exato do caminho,
-// então um restaurante chamado "BarDoZe" nunca cai no painel.
+// Ãreas internas (equipe) sÃ£o servidas por um aplicativo SEPARADO (painel.html).
+// Tudo o mais Ã© o cardÃ¡pio do cliente (index.html). ComparaÃ§Ã£o por 1Âº segmento exato do caminho,
+// entÃ£o um restaurante chamado "BarDoZe" nunca cai no painel.
 const STAFF_PATH_RE = /^\/(painelrestaurante|painel|admin|cozinha|bar|drinks|sushibar|pdv|garcom|mesas|salao|caixa|balcao|delivery|kanban|entregador|courier)(\/|$)/i;
 
 async function startServer() {
-  // Verifica se o diretório de dados persistentes parece "novo" em produção — sintoma
-  // direto do bug de senha/usuários resetando a cada deploy (ver server/dataDir.ts).
+  // Verifica se o diretÃ³rio de dados persistentes parece "novo" em produÃ§Ã£o â€” sintoma
+  // direto do bug de senha/usuÃ¡rios resetando a cada deploy (ver server/dataDir.ts).
   checkDataPersistence();
-  // Inicializa apenas o catálogo público no boot.
-  // Pedidos e usuários são inicializados sob demanda pelas próprias funções.
-  // Isso evita que uma base de pedidos/usuários corrompida ou um disco lento
-  // impeça o servidor HTTP de subir e provoque 502 no Render.
+  // Inicializa apenas o catÃ¡logo pÃºblico no boot.
+  // Pedidos e usuÃ¡rios sÃ£o inicializados sob demanda pelas prÃ³prias funÃ§Ãµes.
+  // Isso evita que uma base de pedidos/usuÃ¡rios corrompida ou um disco lento
+  // impeÃ§a o servidor HTTP de subir e provoque 502 no Render.
   initializeCatalog();
 
   if (process.env.NODE_ENV !== 'production') {
@@ -2821,10 +2919,14 @@ async function startServer() {
 
 // Rotas /api inexistentes devolvem JSON 404 (nunca o HTML do app)
 app.use('/api', (req, res) => {
-  res.status(404).json({ success: false, error: 'Rota não encontrada.' });
+  res.status(404).json({ success: false, error: 'Rota nÃ£o encontrada.' });
 });
 
 startServer().catch((err) => {
   console.error('[FATAL] Falha ao iniciar o servidor:', err.message);
   process.exit(1);
 });
+
+
+
+

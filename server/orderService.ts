@@ -1,4 +1,4 @@
-import fs from 'fs';
+﻿import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { normalizePhone } from './phoneUtils';
@@ -62,7 +62,7 @@ export type ServerOrderType = 'mesa' | 'balcao' | 'delivery' | 'retirada' | 'onl
 
 export function normalizeOrderOrigin(raw: string | undefined | null): ServerOrderType {
   if (!raw) return 'mesa';
-  const clean = raw.toLowerCase().trim().replace(/ã/g, 'a').replace(/ç/g, 'c');
+  const clean = raw.toLowerCase().trim().replace(/Ã£/g, 'a').replace(/Ã§/g, 'c');
   if (clean === 'dine_in' || clean === 'mesa' || clean.includes('mesa')) return 'mesa';
   if (clean === 'counter' || clean === 'balcao' || clean.includes('balcao')) return 'balcao';
   if (clean === 'delivery' || clean.includes('entrega')) return 'delivery';
@@ -99,7 +99,7 @@ export interface Order {
   stations?: Partial<Record<ProductionStation, StationProductionRecord>>;
   subtotal: number;
   deliveryFee: number;
-  /** Taxa de serviço (10% do Salão) cobrada no fechamento da mesa. 0/ausente = dispensada. */
+  /** Taxa de serviÃ§o (10% do SalÃ£o) cobrada no fechamento da mesa. 0/ausente = dispensada. */
   serviceFee?: number;
   discount: number;
   couponCode?: string;
@@ -116,24 +116,24 @@ export interface Order {
   status: OrderStatus;
   statusHistory: StatusHistoryEntry[];
   printStatus: 'pendente' | 'imprimindo' | 'impresso';
-  // V8 PRO: ver mesmo campo em src/types/restaurant.ts — "fechar" a mesa
-  // (pedir a conta) é diferente de "pagar" a mesa.
+  // V8 PRO: ver mesmo campo em src/types/restaurant.ts â€” "fechar" a mesa
+  // (pedir a conta) Ã© diferente de "pagar" a mesa.
   awaitingPayment?: boolean;
   billRequestedAt?: string;
   idempotencyKey?: string;
-  /** Chaves de operações já aplicadas a este pedido (itens adicionados à mesa) — evita duplicar item/comanda em retry. */
+  /** Chaves de operaÃ§Ãµes jÃ¡ aplicadas a este pedido (itens adicionados Ã  mesa) â€” evita duplicar item/comanda em retry. */
   appliedOperationKeys?: string[];
-  /** Token secreto entregue só a quem criou o pedido; permite acompanhar sem login. */
+  /** Token secreto entregue sÃ³ a quem criou o pedido; permite acompanhar sem login. */
   trackingToken?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-// Classificação de item -> setor: módulo compartilhado com o navegador (impressão offline).
+// ClassificaÃ§Ã£o de item -> setor: mÃ³dulo compartilhado com o navegador (impressÃ£o offline).
 export { resolveItemStation } from '../src/utils/stationClassifier';
 import { resolveItemStation } from '../src/utils/stationClassifier';
 
-import { DATA_DIR } from './dataDir'; // Caminho configurável via env DATA_DIR (ver server/dataDir.ts)
+import { DATA_DIR } from './dataDir'; // Caminho configurÃ¡vel via env DATA_DIR (ver server/dataDir.ts)
 import { getSystemSettings } from './systemSettings';
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const CUSTOMERS_FILE = path.join(DATA_DIR, 'customers.json');
@@ -178,14 +178,14 @@ function getInitialSampleOrders(): Order[] {
       deliveryAddress: {
         street: 'Rua Bela Cintra',
         number: '850',
-        neighborhood: 'Consolação',
-        city: 'São Paulo',
+        neighborhood: 'ConsolaÃ§Ã£o',
+        city: 'SÃ£o Paulo',
         complement: 'Apto 42',
       },
       items: [
         {
           id: 'ord-item-1',
-          name: 'Combinado Tokyo Premium (32 Peças)',
+          name: 'Combinado Tokyo Premium (32 PeÃ§as)',
           quantity: 1,
           unitPrice: 84.9,
           totalPrice: 88.4,
@@ -193,8 +193,8 @@ function getInitialSampleOrders(): Order[] {
             {
               groupId: 'molhos',
               groupTitle: 'Molhos adicionais',
-              optionId: 'tarê',
-              name: 'Molho Tarê Artesanal Extra',
+              optionId: 'tarÃª',
+              name: 'Molho TarÃª Artesanal Extra',
               price: 3.5,
             },
           ],
@@ -202,7 +202,7 @@ function getInitialSampleOrders(): Order[] {
         },
         {
           id: 'ord-item-2',
-          name: 'Guioza Suíno Dourado na Chapa (6 Unidades)',
+          name: 'Guioza SuÃ­no Dourado na Chapa (6 Unidades)',
           quantity: 1,
           unitPrice: 28.0,
           totalPrice: 28.0,
@@ -220,7 +220,7 @@ function getInitialSampleOrders(): Order[] {
       notes: 'Interfone tocar no bloco B',
       status: 'recebido', // STRICT INITIAL: Was em_preparo in seed, guaranteed received
       statusHistory: [
-        { status: 'recebido', timestamp: 'Há 12 minutos', note: 'Pedido criado pelo cliente via Cardápio Web' },
+        { status: 'recebido', timestamp: 'HÃ¡ 12 minutos', note: 'Pedido criado pelo cliente via CardÃ¡pio Web' },
       ],
       printStatus: 'pendente',
       idempotencyKey: 'seed-ord-101',
@@ -264,10 +264,10 @@ function getInitialSampleOrders(): Order[] {
         cardBrand: 'Mastercard',
         paid: false,
       },
-      notes: 'Mesa 4 - Atendimento no salão',
+      notes: 'Mesa 4 - Atendimento no salÃ£o',
       status: 'recebido',
       statusHistory: [
-        { status: 'recebido', timestamp: 'Há 5 minutos', note: 'Pedido de mesa enviado pelo cliente' },
+        { status: 'recebido', timestamp: 'HÃ¡ 5 minutos', note: 'Pedido de mesa enviado pelo cliente' },
       ],
       printStatus: 'pendente',
       idempotencyKey: 'seed-ord-102',
@@ -291,16 +291,16 @@ export function initializeOrders() {
     const raw = fs.existsSync(ORDERS_FILE) ? fs.readFileSync(ORDERS_FILE, 'utf-8').trim() : '';
     if (raw) {
       ordersCache = JSON.parse(raw);
-      // V9.3: pedidos de demonstração do seed (id `seed-ord-*`) nunca são pedidos reais: são removidos.
+      // V9.3: pedidos de demonstraÃ§Ã£o do seed (id `seed-ord-*`) nunca sÃ£o pedidos reais: sÃ£o removidos.
       const before = ordersCache.length;
       ordersCache = ordersCache.filter((o: any) => !String(o?.idempotencyKey || '').startsWith('seed-ord-'));
       if (ordersCache.length !== before) {
         persistOrdersSync();
-        console.log(`[ORDER STORAGE] ${before - ordersCache.length} pedido(s) de demonstração removido(s).`);
+        console.log(`[ORDER STORAGE] ${before - ordersCache.length} pedido(s) de demonstraÃ§Ã£o removido(s).`);
       }
       console.log(`[ORDER STORAGE] Carregados ${ordersCache.length} pedidos persistidos do arquivo.`);
     } else {
-      // Arquivo ausente/vazio: começa limpo. Pedidos de demonstração só com SEED_DEMO_ORDERS=true.
+      // Arquivo ausente/vazio: comeÃ§a limpo. Pedidos de demonstraÃ§Ã£o sÃ³ com SEED_DEMO_ORDERS=true.
       ordersCache = process.env.SEED_DEMO_ORDERS === 'true' ? getInitialSampleOrders() : [];
       persistOrdersSync();
       console.log(`[ORDER STORAGE] Banco de pedidos iniciado (${ordersCache.length} pedidos).`);
@@ -309,7 +309,7 @@ export function initializeOrders() {
     // NUNCA substituir pedidos reais por dados de exemplo: preserva o arquivo e interrompe.
     const backup = `${ORDERS_FILE}.corrupt-${Date.now()}`;
     try { fs.copyFileSync(ORDERS_FILE, backup); } catch {}
-    console.error(`[ORDER STORAGE FATAL] orders.json ilegível: ${(err as Error).message}. Cópia preservada em ${backup}.`);
+    console.error(`[ORDER STORAGE FATAL] orders.json ilegÃ­vel: ${(err as Error).message}. CÃ³pia preservada em ${backup}.`);
     throw new Error('Base de pedidos corrompida. Restaure o backup antes de iniciar o servidor.');
   }
   isInitialized = true;
@@ -389,7 +389,7 @@ export interface CreateOrderPayload {
 }
 
 export interface OrderActor {
-  /** true quando a requisição veio de colaborador autenticado (PDV, garçom, caixa...). */
+  /** true quando a requisiÃ§Ã£o veio de colaborador autenticado (PDV, garÃ§om, caixa...). */
   isStaff?: boolean;
 }
 
@@ -400,7 +400,7 @@ function cleanText(v: unknown, max: number): string {
   return String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max);
 }
 
-/** Precifica e valida todas as linhas contra o catálogo do servidor. */
+/** Precifica e valida todas as linhas contra o catÃ¡logo do servidor. */
 export function priceOrderItems(
   slug: string,
   items: any[],
@@ -410,7 +410,7 @@ export function priceOrderItems(
     throw new Error('O pedido deve conter pelo menos 1 item.');
   }
   if (items.length > MAX_ITEMS_PER_ORDER) {
-    throw new Error(`Um pedido pode ter no máximo ${MAX_ITEMS_PER_ORDER} itens.`);
+    throw new Error(`Um pedido pode ter no mÃ¡ximo ${MAX_ITEMS_PER_ORDER} itens.`);
   }
   let subtotal = 0;
   const priced: OrderItem[] = items.map((it, idx) => {
@@ -452,28 +452,28 @@ export function createOrderTransactional(
   const customerName = cleanText(payload.customerName, 80);
   const canonicalRequestedType = normalizeOrderOrigin(payload.orderType);
   if (!customerName || (canonicalRequestedType !== 'mesa' && !payload.customerPhone)) {
-    throw new Error('Nome e telefone do cliente são obrigatórios.');
+    throw new Error('Nome e telefone do cliente sÃ£o obrigatÃ³rios.');
   }
 
-  // 3. Restaurante precisa existir no catálogo (sem "cair" silenciosamente em outro)
+  // 3. Restaurante precisa existir no catÃ¡logo (sem "cair" silenciosamente em outro)
   const slug = String(payload.restaurantSlug || '');
   if (!restaurantExists(slug)) {
-    throw new Error('Restaurante não encontrado.');
+    throw new Error('Restaurante nÃ£o encontrado.');
   }
   const restaurant = getRestaurant(slug);
   if (restaurant.isActive === false) {
-    throw new Error('Este restaurante não está recebendo pedidos.');
+    throw new Error('Este restaurante nÃ£o estÃ¡ recebendo pedidos.');
   }
   assertCanAcceptNewOrder(slug, Boolean(actor.isStaff));
   if (!actor.isStaff && restaurant.isOpen === false) {
-    throw new Error(`${restaurant.name} está fechado no momento e não está recebendo pedidos.`);
+    throw new Error(`${restaurant.name} estÃ¡ fechado no momento e nÃ£o estÃ¡ recebendo pedidos.`);
   }
   if (canonicalRequestedType === 'mesa') {
     assertTableNotAwaitingPayment(slug, Number(payload.tableNumber));
   }
   const restaurantName = restaurant.name;
 
-  // 4. Preços SEMPRE vindos do catálogo do servidor
+  // 4. PreÃ§os SEMPRE vindos do catÃ¡logo do servidor
   const priced = priceOrderItems(slug, payload.items, actor);
   const sanitizedItems = priced.items;
   let calculatedSubtotal = priced.subtotal;
@@ -492,7 +492,7 @@ export function createOrderTransactional(
     stationsMap[st]!.itemsCount += item.quantity;
   }
 
-  // Cupom validado no servidor (catálogo)
+  // Cupom validado no servidor (catÃ¡logo)
   let calculatedDiscount = 0;
   let appliedCouponCode: string | undefined;
   if (payload.couponCode) {
@@ -507,7 +507,7 @@ export function createOrderTransactional(
   }
   calculatedDiscount = Math.min(calculatedDiscount, calculatedSubtotal);
 
-  // Taxa de entrega e pedido mínimo vêm do cadastro do restaurante
+  // Taxa de entrega e pedido mÃ­nimo vÃªm do cadastro do restaurante
   const canonicalOrderType = normalizeOrderOrigin(payload.orderType);
   if (
     canonicalOrderType === 'delivery' &&
@@ -515,20 +515,20 @@ export function createOrderTransactional(
     restaurant.minOrderValue &&
     calculatedSubtotal < restaurant.minOrderValue
   ) {
-    throw new Error(`Pedido mínimo para entrega em ${restaurant.name}: R$ ${Number(restaurant.minOrderValue).toFixed(2)}.`);
+    throw new Error(`Pedido mÃ­nimo para entrega em ${restaurant.name}: R$ ${Number(restaurant.minOrderValue).toFixed(2)}.`);
   }
   if (canonicalOrderType === 'delivery') {
     const a = payload.deliveryAddress;
     if (!a || !cleanText(a.street, 120) || !cleanText(a.number, 20) || !cleanText(a.neighborhood, 80)) {
-      throw new Error('Endereço de entrega incompleto (rua, número e bairro).');
+      throw new Error('EndereÃ§o de entrega incompleto (rua, nÃºmero e bairro).');
     }
   }
-  // V8 PRO PLUS: taxa por distância (KM). O cliente calcula a distância no
-  // checkout (geocodificação) e envia deliveryAddress.distanceKm; o
-  // SERVIDOR — não o cliente — decide a taxa, buscando a faixa
+  // V8 PRO PLUS: taxa por distÃ¢ncia (KM). O cliente calcula a distÃ¢ncia no
+  // checkout (geocodificaÃ§Ã£o) e envia deliveryAddress.distanceKm; o
+  // SERVIDOR â€” nÃ£o o cliente â€” decide a taxa, buscando a faixa
   // correspondente nas zonas configuradas do restaurante. Isso evita que o
-  // cliente manipule a taxa enviada, mantendo o cálculo de preço sempre
-  // autoritativo no back-end. Sem zonas configuradas ou sem distância
+  // cliente manipule a taxa enviada, mantendo o cÃ¡lculo de preÃ§o sempre
+  // autoritativo no back-end. Sem zonas configuradas ou sem distÃ¢ncia
   // informada, cai de volta para a taxa fixa (comportamento de sempre).
   const requestedDistanceKm =
     canonicalOrderType === 'delivery' && typeof payload.deliveryAddress?.distanceKm === 'number'
@@ -546,8 +546,8 @@ export function createOrderTransactional(
 
 // 4. Generate Unique IDs & Codes
   const randomSuffix = crypto.randomInt(1000, 10000);
-  // V9 PLUS ULTRA 04 — seção 5: remover completamente o símbolo "#" da
-  // apresentação dos pedidos. shortCode é só um código curto de exibição
+  // V9 PLUS ULTRA 04 â€” seÃ§Ã£o 5: remover completamente o sÃ­mbolo "#" da
+  // apresentaÃ§Ã£o dos pedidos. shortCode Ã© sÃ³ um cÃ³digo curto de exibiÃ§Ã£o
   // (o ID interno real continua sendo `orderId`, abaixo, intocado).
   const shortCode = `TK-${randomSuffix}`;
   const orderId = `ord-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
@@ -636,16 +636,41 @@ const ALLOWED_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
 const DEFAULT_STATUS_NOTES: Record<OrderStatus, string> = {
   recebido: 'Pedido registrado no sistema',
   aceito: 'Pedido confirmado e aceito pelo restaurante',
-  em_producao: 'Iniciada produção nas praças',
+  em_producao: 'Iniciada produÃ§Ã£o nas praÃ§as',
   em_preparo: 'Iniciado preparo na cozinha',
-  parcialmente_pronto: 'Praça finalizada - aguardando outras praças',
-  pronto: 'Pronto e embalado com sucesso na expedição',
+  parcialmente_pronto: 'PraÃ§a finalizada - aguardando outras praÃ§as',
+  pronto: 'Pronto e embalado com sucesso na expediÃ§Ã£o',
   saiu_para_entrega: 'Saiu para entrega com entregador',
-  entregue: 'Pedido entregue à mesa / ao cliente',
+  entregue: 'Pedido entregue Ã  mesa / ao cliente',
   finalizado: 'Pedido encerrado e conta fechada',
   cancelado: 'Pedido cancelado',
 };
 
+
+/**
+ * Importa um pedido já criado por uma instância remota do NEXORO.
+ * Mantém o ID, código, itens, valores e demais dados originais.
+ * Usado exclusivamente pela ponte de sincronização entre Render e PDV local.
+ */
+export function importOrderTransactional(order: Order): { order: Order; deduplicated: boolean } {
+  initializeOrders();
+
+  const existing = ordersCache.find((o) => o.id === order.id);
+  if (existing) {
+    return { order: existing, deduplicated: true };
+  }
+
+  if (!order || !order.id || !order.shortCode) {
+    throw new Error('Pedido remoto inválido para importação.');
+  }
+
+  ordersCache.unshift(order);
+  persistOrdersSync();
+
+  console.log(`[SYNC] Pedido remoto importado: ${order.shortCode} (${order.orderType}, R$ ${Number(order.total || 0).toFixed(2)})`);
+
+  return { order, deduplicated: false };
+}
 export function updateOrderStatusTransactional(
   orderId: string,
   newStatus: OrderStatus,
@@ -655,7 +680,7 @@ export function updateOrderStatusTransactional(
 
   const idx = ordersCache.findIndex((o) => o.id === orderId);
   if (idx === -1) {
-    throw new Error(`Pedido com ID "${orderId}" não encontrado.`);
+    throw new Error(`Pedido com ID "${orderId}" nÃ£o encontrado.`);
   }
 
   const currentOrder = ordersCache[idx];
@@ -664,7 +689,7 @@ export function updateOrderStatusTransactional(
   // Prevent illegal skip (e.g. recebido -> pronto)
   if (!allowed.includes(newStatus)) {
     throw new Error(
-      `Transição inválida: Não é permitido mudar de "${currentOrder.status}" diretamente para "${newStatus}". O fluxo obrigatório é: recebido -> em_preparo -> pronto -> saiu_para_entrega -> entregue.`
+      `TransiÃ§Ã£o invÃ¡lida: NÃ£o Ã© permitido mudar de "${currentOrder.status}" diretamente para "${newStatus}". O fluxo obrigatÃ³rio Ã©: recebido -> em_preparo -> pronto -> saiu_para_entrega -> entregue.`
     );
   }
 
@@ -688,7 +713,7 @@ export function updateOrderStatusTransactional(
   ordersCache[idx] = updatedOrder;
   persistOrdersSync();
 
-  console.log(`[ORDER STATUS] Pedido ${updatedOrder.shortCode} avançou: ${currentOrder.status} -> ${newStatus}`);
+  console.log(`[ORDER STATUS] Pedido ${updatedOrder.shortCode} avanÃ§ou: ${currentOrder.status} -> ${newStatus}`);
   return updatedOrder;
 }
 
@@ -699,7 +724,7 @@ export function updateOrderPrintStatusTransactional(
   initializeOrders();
   const idx = ordersCache.findIndex((o) => o.id === orderId);
   if (idx === -1) {
-    throw new Error(`Pedido com ID "${orderId}" não encontrado.`);
+    throw new Error(`Pedido com ID "${orderId}" nÃ£o encontrado.`);
   }
 
   ordersCache[idx] = {
@@ -718,7 +743,7 @@ export function updateOrderTableTransactional(
   initializeOrders();
   const idx = ordersCache.findIndex((o) => o.id === orderId);
   if (idx === -1) {
-    throw new Error(`Pedido com ID "${orderId}" não encontrado.`);
+    throw new Error(`Pedido com ID "${orderId}" nÃ£o encontrado.`);
   }
 
   const oldTable = ordersCache[idx].tableNumber;
@@ -740,7 +765,7 @@ export function deleteOrderTransactional(orderId: string): boolean {
   ordersCache = ordersCache.filter((o) => o.id !== orderId);
   if (ordersCache.length !== initialLen) {
     persistOrdersSync();
-    console.log(`[ORDER] Pedido ${orderId} excluído.`);
+    console.log(`[ORDER] Pedido ${orderId} excluÃ­do.`);
     return true;
   }
   return false;
@@ -770,7 +795,7 @@ export function clearOrdersTransactional(slug?: string, mode: 'finished' | 'all'
 
   const removed = beforeCount - ordersCache.length;
   persistOrdersSync();
-  console.log(`[ORDER] Limpeza de histórico concluída: ${removed} pedidos removidos.`);
+  console.log(`[ORDER] Limpeza de histÃ³rico concluÃ­da: ${removed} pedidos removidos.`);
   return removed;
 }
 
@@ -788,7 +813,7 @@ export function masterResetOrdersTransactional(operatorName: string): {
 
   const timestamp = new Date().toISOString();
   console.log(
-    `[MASTER RESET] Reset Mestre executado por "${operatorName}". ${beforeCount} pedidos apagados em transação.`
+    `[MASTER RESET] Reset Mestre executado por "${operatorName}". ${beforeCount} pedidos apagados em transaÃ§Ã£o.`
   );
 
   return {
@@ -828,7 +853,7 @@ export function updateOrderStationStatusTransactional(
   initializeOrders();
   const idx = ordersCache.findIndex((o) => o.id === orderId);
   if (idx === -1) {
-    throw new Error(`Pedido com ID "${orderId}" não encontrado.`);
+    throw new Error(`Pedido com ID "${orderId}" nÃ£o encontrado.`);
   }
 
   const currentOrder = ordersCache[idx];
@@ -873,7 +898,7 @@ export function updateOrderStationStatusTransactional(
   };
 
   // Determine global order status
-  // RECEBIDO -> ACEITO -> EM PRODUÇÃO -> PARCIALMENTE PRONTO -> PRONTO -> ENTREGUE -> FINALIZADO
+  // RECEBIDO -> ACEITO -> EM PRODUÃ‡ÃƒO -> PARCIALMENTE PRONTO -> PRONTO -> ENTREGUE -> FINALIZADO
   const activeStations = Object.values(updatedStations).filter((s) => s && s.itemsCount > 0);
   const allDone = activeStations.length > 0 && activeStations.every((s) => s?.status === 'pedido_feito');
   const someDone = activeStations.some((s) => s?.status === 'pedido_feito');
@@ -895,7 +920,7 @@ export function updateOrderStationStatusTransactional(
     {
       status: newGlobalStatus,
       timestamp: 'Agora mesmo',
-      note: `Praça [${station.toUpperCase()}] atualizada para ${stationStatus.toUpperCase()}${operatorName ? ` por ${operatorName}` : ''}`,
+      note: `PraÃ§a [${station.toUpperCase()}] atualizada para ${stationStatus.toUpperCase()}${operatorName ? ` por ${operatorName}` : ''}`,
     },
   ];
 
@@ -935,29 +960,29 @@ export function appendItemsToTableOrderTransactional(params: {
   initializeOrders();
 
   if (!restaurantExists(params.restaurantSlug)) {
-    throw new Error('Restaurante não encontrado.');
+    throw new Error('Restaurante nÃ£o encontrado.');
   }
-  // V9 PLUS ULTRA 01: pausa também vale para pedidos de mesa feitos pelo cliente (QR).
-  // Vale só para o restaurante informado; a equipe continua podendo lançar.
+  // V9 PLUS ULTRA 01: pausa tambÃ©m vale para pedidos de mesa feitos pelo cliente (QR).
+  // Vale sÃ³ para o restaurante informado; a equipe continua podendo lanÃ§ar.
   if (!actor.isStaff) {
     const rest = getRestaurant(params.restaurantSlug);
-    if (rest?.isActive === false) throw new Error('Este restaurante não está recebendo pedidos.');
+    if (rest?.isActive === false) throw new Error('Este restaurante nÃ£o estÃ¡ recebendo pedidos.');
     assertCanAcceptNewOrder(params.restaurantSlug, false);
     if (rest?.isOpen === false) {
       throw new Error('Restaurante temporariamente fechado para novos pedidos.');
     }
   }
   if (!Number.isInteger(params.tableNumber) || params.tableNumber < 1 || params.tableNumber > 999) {
-    throw new Error('Número de mesa inválido.');
+    throw new Error('NÃºmero de mesa invÃ¡lido.');
   }
   assertTableNotAwaitingPayment(params.restaurantSlug, params.tableNumber);
 
-  // Idempotência obrigatória para operações de mesa: retries/reloads com a mesma chave
+  // IdempotÃªncia obrigatÃ³ria para operaÃ§Ãµes de mesa: retries/reloads com a mesma chave
   // devem devolver exatamente o mesmo resultado sem acrescentar itens novamente.
   if (params.idempotencyKey) {
     const existingByKey = findOrderByDeliveryKey(params.idempotencyKey);
     if (existingByKey && existingByKey.restaurantSlug === params.restaurantSlug) {
-      // CORREÇÃO: retry/reload com a mesma chave não pode REIMPRIMIR a comanda.
+      // CORREÃ‡ÃƒO: retry/reload com a mesma chave nÃ£o pode REIMPRIMIR a comanda.
       return { order: existingByKey, isNew: false, addedItems: [], deduplicated: true };
     }
   }
@@ -1017,7 +1042,7 @@ export function appendItemsToTableOrderTransactional(params: {
       {
         status: newStatus,
         timestamp: 'Agora mesmo',
-        note: `+${sanitizedNewItems.length} item(s) adicionados à mesa ${params.tableNumber}${params.waiterName ? ` por ${params.waiterName}` : ' pelo cliente'}`,
+        note: `+${sanitizedNewItems.length} item(s) adicionados Ã  mesa ${params.tableNumber}${params.waiterName ? ` por ${params.waiterName}` : ' pelo cliente'}`,
       },
     ];
 
@@ -1030,8 +1055,8 @@ export function appendItemsToTableOrderTransactional(params: {
       status: newStatus,
       statusHistory: updatedHistory,
       waiterName: params.waiterName || existingOrder.waiterName,
-      // CORREÇÃO: guarda a chave desta operação. Antes só a chave de criação do pedido era
-      // lembrada, então um retry (rede lenta, toque duplo) ADICIONAVA os itens de novo.
+      // CORREÃ‡ÃƒO: guarda a chave desta operaÃ§Ã£o. Antes sÃ³ a chave de criaÃ§Ã£o do pedido era
+      // lembrada, entÃ£o um retry (rede lenta, toque duplo) ADICIONAVA os itens de novo.
       appliedOperationKeys: params.idempotencyKey
         ? [...(existingOrder.appliedOperationKeys || []), params.idempotencyKey].slice(-50)
         : existingOrder.appliedOperationKeys,
@@ -1044,7 +1069,7 @@ export function appendItemsToTableOrderTransactional(params: {
     return { order: updatedOrder, isNew: false, addedItems: sanitizedNewItems, deduplicated: false };
   }
 
-  // Otherwise, create new order for table (preços recalculados dentro de createOrderTransactional)
+  // Otherwise, create new order for table (preÃ§os recalculados dentro de createOrderTransactional)
   const newOrderResult = createOrderTransactional(
     {
       orderType: 'mesa',
@@ -1081,13 +1106,13 @@ export function updateOrderItemTransactional(params: {
 }): Order {
   initializeOrders();
   const idx = ordersCache.findIndex((o) => o.id === params.orderId);
-  if (idx === -1) throw new Error(`Pedido com ID "${params.orderId}" não encontrado.`);
+  if (idx === -1) throw new Error(`Pedido com ID "${params.orderId}" nÃ£o encontrado.`);
   const order = ordersCache[idx];
   if (order.status === 'finalizado' || order.status === 'cancelado') {
-    throw new Error('Não é possível editar um pedido encerrado ou cancelado.');
+    throw new Error('NÃ£o Ã© possÃ­vel editar um pedido encerrado ou cancelado.');
   }
   const itemIndex = order.items.findIndex((i) => i.id === params.itemId);
-  if (itemIndex === -1) throw new Error('Item do pedido não encontrado.');
+  if (itemIndex === -1) throw new Error('Item do pedido nÃ£o encontrado.');
   const current = order.items[itemIndex];
   const qty = Math.min(MAX_QTY_PER_ITEM, Math.max(1, Math.floor(Number(params.quantity) || 1)));
   const priced = priceOrderItems(order.restaurantSlug, [{
@@ -1111,12 +1136,12 @@ export function updateOrderItemTransactional(params: {
 }
 
 /**
- * V9.2 — EXCLUIR ITEM: remove SOMENTE a quantidade informada do item selecionado.
- * - quantity < quantidade do item  → reduz a quantidade (recalcula preço/total);
- * - quantity >= quantidade do item → remove a linha do item;
- * - nunca apaga o pedido, cliente, mesa ou histórico; se sobrar zero itens, recusa
- *   (para isso existe cancelar pedido, com suas próprias regras).
- * Registra a operação no histórico do pedido (auditoria).
+ * V9.2 â€” EXCLUIR ITEM: remove SOMENTE a quantidade informada do item selecionado.
+ * - quantity < quantidade do item  â†’ reduz a quantidade (recalcula preÃ§o/total);
+ * - quantity >= quantidade do item â†’ remove a linha do item;
+ * - nunca apaga o pedido, cliente, mesa ou histÃ³rico; se sobrar zero itens, recusa
+ *   (para isso existe cancelar pedido, com suas prÃ³prias regras).
+ * Registra a operaÃ§Ã£o no histÃ³rico do pedido (auditoria).
  */
 export function removeOrderItemQuantityTransactional(params: {
   orderId: string;
@@ -1127,23 +1152,23 @@ export function removeOrderItemQuantityTransactional(params: {
 }): { order: Order; removedQty: number; removedValue: number; removedName: string; lineRemoved: boolean } {
   initializeOrders();
   const idx = ordersCache.findIndex((o) => o.id === params.orderId);
-  if (idx === -1) throw new Error(`Pedido com ID "${params.orderId}" não encontrado.`);
+  if (idx === -1) throw new Error(`Pedido com ID "${params.orderId}" nÃ£o encontrado.`);
   const order = ordersCache[idx];
   if (order.status === 'finalizado' || order.status === 'cancelado') {
-    throw new Error('Não é possível excluir item de um pedido encerrado ou cancelado.');
+    throw new Error('NÃ£o Ã© possÃ­vel excluir item de um pedido encerrado ou cancelado.');
   }
   if (order.paymentDetails?.paid) {
-    throw new Error('Pedido já pago: exclusão de item bloqueada. Use estorno/cancelamento pelo caixa.');
+    throw new Error('Pedido jÃ¡ pago: exclusÃ£o de item bloqueada. Use estorno/cancelamento pelo caixa.');
   }
   const itemIndex = order.items.findIndex((i) => i.id === params.itemId);
-  if (itemIndex === -1) throw new Error('Item do pedido não encontrado.');
+  if (itemIndex === -1) throw new Error('Item do pedido nÃ£o encontrado.');
   const current = order.items[itemIndex];
   const wanted = Math.floor(Number(params.quantity));
-  if (!Number.isFinite(wanted) || wanted < 1) throw new Error('Informe uma quantidade válida (mínimo 1).');
+  if (!Number.isFinite(wanted) || wanted < 1) throw new Error('Informe uma quantidade vÃ¡lida (mÃ­nimo 1).');
   const removedQty = Math.min(wanted, current.quantity);
   const remaining = current.quantity - removedQty;
   if (remaining === 0 && order.items.length === 1) {
-    throw new Error('Este é o único item do pedido. Para removê-lo, cancele o pedido.');
+    throw new Error('Este Ã© o Ãºnico item do pedido. Para removÃª-lo, cancele o pedido.');
   }
 
   let items = [...order.items];
@@ -1179,7 +1204,7 @@ export function removeOrderItemQuantityTransactional(params: {
       {
         status: order.status,
         timestamp: 'Agora mesmo',
-        note: `ITEM EXCLUÍDO: ${removedQty}x ${current.name} (R$ ${removedValue.toFixed(2)})${params.reason ? ` — motivo: ${params.reason}` : ''}${params.operatorName ? ` — por ${params.operatorName}` : ''}.`,
+        note: `ITEM EXCLUÃDO: ${removedQty}x ${current.name} (R$ ${removedValue.toFixed(2)})${params.reason ? ` â€” motivo: ${params.reason}` : ''}${params.operatorName ? ` â€” por ${params.operatorName}` : ''}.`,
       },
     ],
     updatedAt: nowIso,
@@ -1190,20 +1215,20 @@ export function removeOrderItemQuantityTransactional(params: {
 }
 
 /**
- * V8 PRO — "FECHAR MESA ≠ PAGAR MESA".
+ * V8 PRO â€” "FECHAR MESA â‰  PAGAR MESA".
  * Marca a(s) comanda(s) ativas de uma mesa como "conta fechada, aguardando
- * pagamento" — o garçom/cliente pediu a conta, mas o caixa ainda não
- * recebeu o pagamento. Não altera status nem paymentDetails.paid; é só um
+ * pagamento" â€” o garÃ§om/cliente pediu a conta, mas o caixa ainda nÃ£o
+ * recebeu o pagamento. NÃ£o altera status nem paymentDetails.paid; Ã© sÃ³ um
  * sinalizador visual/operacional para diferenciar das mesas ainda em
- * consumo. A confirmação do pagamento continua sendo feita por
+ * consumo. A confirmaÃ§Ã£o do pagamento continua sendo feita por
  * closeTableOrderTransactional (que grava paid=true e status='finalizado').
  */
 /**
- * V9 ULTRA-CORREÇÃO: trava de segurança usada tanto na criação de pedido
- * (createOrderTransactional, orderType 'mesa') quanto no lançamento
- * incremental (appendItemsToTableOrderTransactional). Enquanto a mesa está
+ * V9 ULTRA-CORREÃ‡ÃƒO: trava de seguranÃ§a usada tanto na criaÃ§Ã£o de pedido
+ * (createOrderTransactional, orderType 'mesa') quanto no lanÃ§amento
+ * incremental (appendItemsToTableOrderTransactional). Enquanto a mesa estÃ¡
  * em AGUARDANDO PAGAMENTO (awaitingPayment=true numa comanda ativa), nenhum
- * item novo pode ser lançado — a conta só volta a aceitar lançamentos após
+ * item novo pode ser lanÃ§ado â€” a conta sÃ³ volta a aceitar lanÃ§amentos apÃ³s
  * REABRIR CONTA (reopenTableOrderTransactional) ou depois de finalizada via
  * PAGAMENTO.
  */
@@ -1220,7 +1245,7 @@ function assertTableNotAwaitingPayment(restaurantSlug: string, tableNumber?: num
   );
   if (blocking) {
     throw new Error(
-      `Mesa ${tableNumber} está em FECHAMENTO (aguardando pagamento) e não aceita novos itens. Reabra a conta para lançar novos pedidos.`
+      `Mesa ${tableNumber} estÃ¡ em FECHAMENTO (aguardando pagamento) e nÃ£o aceita novos itens. Reabra a conta para lanÃ§ar novos pedidos.`
     );
   }
 }
@@ -1251,7 +1276,7 @@ export function requestTableBillTransactional(params: {
           {
             status: order.status,
             timestamp: 'Agora mesmo',
-            note: `Conta solicitada${params.operatorName ? ` por ${params.operatorName}` : ''} — aguardando pagamento no caixa.`,
+            note: `Conta solicitada${params.operatorName ? ` por ${params.operatorName}` : ''} â€” aguardando pagamento no caixa.`,
           },
         ],
         updatedAt: nowIso,
@@ -1266,11 +1291,11 @@ export function requestTableBillTransactional(params: {
 }
 
 /**
- * V9 ULTRA-CORREÇÃO — "REABRIR CONTA".
- * Desfaz o FECHAMENTO temporário (awaitingPayment=true) sem tocar em itens,
+ * V9 ULTRA-CORREÃ‡ÃƒO â€” "REABRIR CONTA".
+ * Desfaz o FECHAMENTO temporÃ¡rio (awaitingPayment=true) sem tocar em itens,
  * valores ou status do pedido: a mesa volta para EM USO e passa a aceitar
- * novos lançamentos de novo. Nunca mexe em comandas já finalizadas/pagas —
- * essa função não reverte um PAGAMENTO, só um pedido de conta.
+ * novos lanÃ§amentos de novo. Nunca mexe em comandas jÃ¡ finalizadas/pagas â€”
+ * essa funÃ§Ã£o nÃ£o reverte um PAGAMENTO, sÃ³ um pedido de conta.
  */
 export function reopenTableOrderTransactional(params: {
   tableNumber: number;
@@ -1298,7 +1323,7 @@ export function reopenTableOrderTransactional(params: {
           {
             status: order.status,
             timestamp: 'Agora mesmo',
-            note: `Conta reaberta${params.operatorName ? ` por ${params.operatorName}` : ''} — mesa voltou para EM USO, novos itens liberados.`,
+            note: `Conta reaberta${params.operatorName ? ` por ${params.operatorName}` : ''} â€” mesa voltou para EM USO, novos itens liberados.`,
           },
         ],
         updatedAt: nowIso,
@@ -1327,27 +1352,27 @@ export function closeTableOrderTransactional(params: {
   initializeOrders();
   const idx = ordersCache.findIndex((o) => o.id === params.orderId);
   if (idx === -1) {
-    throw new Error(`Pedido com ID "${params.orderId}" não encontrado para fechamento.`);
+    throw new Error(`Pedido com ID "${params.orderId}" nÃ£o encontrado para fechamento.`);
   }
 
   const currentOrder = ordersCache[idx];
 
-  // Segurança (item 8 do checklist de fechamento): impede fechamento
-  // duplicado. Sem esta trava no backend, dois cliques no botão de fechar
+  // SeguranÃ§a (item 8 do checklist de fechamento): impede fechamento
+  // duplicado. Sem esta trava no backend, dois cliques no botÃ£o de fechar
   // (ou duas abas/dispositivos fechando a mesma comanda) reabririam o
-  // fluxo de pagamento sobre uma conta já paga e gerariam duplicidade no
-  // histórico/auditoria mesmo com a trava de UI (disabled) do frontend.
+  // fluxo de pagamento sobre uma conta jÃ¡ paga e gerariam duplicidade no
+  // histÃ³rico/auditoria mesmo com a trava de UI (disabled) do frontend.
   if (currentOrder.status === 'finalizado' && currentOrder.paymentDetails?.paid) {
     throw new Error(
-      `Esta conta (Mesa ${params.tableNumber}, pedido ${currentOrder.shortCode}) já foi fechada e paga anteriormente. Abra uma nova comanda para a mesa.`
+      `Esta conta (Mesa ${params.tableNumber}, pedido ${currentOrder.shortCode}) jÃ¡ foi fechada e paga anteriormente. Abra uma nova comanda para a mesa.`
     );
   }
 
   const nowIso = new Date().toISOString();
   const discount = Math.max(0, Number(params.discount) || 0);
-  // Taxa de serviço de 10% (EXCLUSIVA de mesa). Se o cliente não informou o campo
-  // (undefined), vale o padrão do sistema (10% incluída). Se informou 0, foi
-  // DESATIVADA de propósito pelo operador e é respeitada.
+  // Taxa de serviÃ§o de 10% (EXCLUSIVA de mesa). Se o cliente nÃ£o informou o campo
+  // (undefined), vale o padrÃ£o do sistema (10% incluÃ­da). Se informou 0, foi
+  // DESATIVADA de propÃ³sito pelo operador e Ã© respeitada.
   const feeDefaultOn = getSystemSettings().serviceFeeDefaultOn !== false;
   const serviceFee =
     params.serviceFee === undefined || params.serviceFee === null
@@ -1367,7 +1392,7 @@ export function closeTableOrderTransactional(params: {
 
   const closeNote = `Conta da Mesa ${params.tableNumber} fechada via ${params.paymentMethod.toUpperCase()} (${receiptLabel})${
     discount > 0 ? ` (Desconto: R$ ${discount.toFixed(2)})` : ''
-  }${serviceFee > 0 ? ` (Taxa Serviço: R$ ${serviceFee.toFixed(2)})` : ''}${
+  }${serviceFee > 0 ? ` (Taxa ServiÃ§o: R$ ${serviceFee.toFixed(2)})` : ''}${
     splitCount > 1 ? ` (Dividido em ${splitCount}x R$ ${splitPerPerson.toFixed(2)})` : ''
   }${params.waiterNotes ? ` - Obs: ${params.waiterNotes}` : ''}${
     params.operatorName ? ` por ${params.operatorName}` : ''
@@ -1385,15 +1410,15 @@ export function closeTableOrderTransactional(params: {
   const updatedOrder: Order = {
     ...currentOrder,
     // BUG CORRIGIDO: o fechamento da mesa gravava status 'entregue', mas
-    // todos os filtros de "mesa com conta pendente" (Caixa, Kanban, Salão)
-    // só consideram a mesa paga/fechada quando status === 'finalizado'.
-    // Com 'entregue' a mesa nunca saía da lista de pendentes mesmo já paga.
+    // todos os filtros de "mesa com conta pendente" (Caixa, Kanban, SalÃ£o)
+    // sÃ³ consideram a mesa paga/fechada quando status === 'finalizado'.
+    // Com 'entregue' a mesa nunca saÃ­a da lista de pendentes mesmo jÃ¡ paga.
     status: 'finalizado',
     awaitingPayment: false,
     paymentMethod: params.paymentMethod,
     discount,
-    // CORREÇÃO: a taxa de serviço tem campo próprio. Antes era gravada no campo
-    // `deliveryFee`, e o cupom/relatório a rotulava como "Taxa de entrega".
+    // CORREÃ‡ÃƒO: a taxa de serviÃ§o tem campo prÃ³prio. Antes era gravada no campo
+    // `deliveryFee`, e o cupom/relatÃ³rio a rotulava como "Taxa de entrega".
     // `deliveryFee` fica como estava no pedido (0 em mesa).
     serviceFee,
     total: finalTotal,
@@ -1419,7 +1444,7 @@ export function closeTableOrderTransactional(params: {
 
 
 // ---------------------------------------------------------------------------
-// VISÕES DE PEDIDO (o que cada perfil pode enxergar)
+// VISÃ•ES DE PEDIDO (o que cada perfil pode enxergar)
 // ---------------------------------------------------------------------------
 
 /** Remove segredos internos antes de enviar para colaboradores. */
@@ -1428,15 +1453,15 @@ export function toStaffView(order: Order): Omit<Order, 'trackingToken'> {
   return rest;
 }
 
-/** Visão do cliente dono do pedido (sem chaves internas). */
+/** VisÃ£o do cliente dono do pedido (sem chaves internas). */
 export function toCustomerView(order: Order) {
   const { idempotencyKey, appliedOperationKeys, printStatus, ...rest } = order;
   return rest;
 }
 
 /**
- * Rastreio público: exige id/código do pedido + token secreto recebido na
- * criação. Sem o token não há como consultar nada.
+ * Rastreio pÃºblico: exige id/cÃ³digo do pedido + token secreto recebido na
+ * criaÃ§Ã£o. Sem o token nÃ£o hÃ¡ como consultar nada.
  */
 export function getOrderForTracking(idOrCode: string, token: string): Order | undefined {
   initializeOrders();
@@ -1448,3 +1473,4 @@ export function getOrderForTracking(idOrCode: string, token: string): Order | un
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return undefined;
   return order;
 }
+

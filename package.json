@@ -12,7 +12,8 @@
     "lint": "tsc --noEmit",
     "test:api": "node scripts/api-security-test.mjs",
     "test:e2e": "python3 scripts/e2e-browser.py",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "sync-agent": "tsx server/nexoroSyncAgent.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
